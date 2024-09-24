@@ -109,3 +109,25 @@ class StockAnalysisTasks():
 
     def __tip_section(self):
         return "If you do your BEST WORK, I'll give you a $10,000 commission!"
+    def analyze_sec_filings(self, agent, sec_data):
+        return Task(
+            description=dedent(f"""
+                Analyze the SEC filings for potential risks, growth opportunities, and 
+                financial trends. Focus on identifying patterns in the income statement,
+                balance sheet, and cash flow.
+                SEC Data: {sec_data}
+            """),
+            agent=agent,
+            expected_output="A detailed analysis of SEC filings highlighting investment risks and opportunities."
+        )
+
+    def analyze_earnings_calls(self, agent, earnings_data):
+        return Task(
+            description=dedent(f"""
+                Analyze the earnings calls for insights on the company's performance, market outlook, and 
+                future guidance. Identify management's tone and sentiment.
+                Earnings Data: {earnings_data}
+            """),
+            agent=agent,
+            expected_output="A detailed earnings call analysis with insights into company performance and outlook."
+        )

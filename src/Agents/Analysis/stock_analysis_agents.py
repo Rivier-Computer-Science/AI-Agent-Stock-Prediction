@@ -79,3 +79,11 @@ class StockAnalysisAgents():
         YahooFinanceNewsTool()
       ]
     )
+  def financial_analyst(self):
+        return Agent(
+            llm=gpt_model,
+            role='Financial Analyst',
+            goal="Provide analysis based on SEC filings and earnings calls to guide investment decisions.",
+            backstory="You are an expert financial analyst with deep knowledge of market trends and SEC regulations.",
+            verbose=True
+        )
