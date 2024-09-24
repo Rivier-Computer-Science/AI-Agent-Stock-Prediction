@@ -79,3 +79,26 @@ class StockAnalysisAgents():
         YahooFinanceNewsTool()
       ]
     )
+  
+  def bollinger_bands_investment_advisor(self):
+        """
+        Returns an agent that analyzes Bollinger Bands data to provide actionable investment advice.
+        The agent is expected to make buy/sell suggestions based on whether the stock is overbought or oversold.
+        """
+        return Agent(
+            llm=gpt_model,
+            role='Bollinger Bands Investment Advisor',
+            goal="""Provide actionable buying or selling suggestions by analyzing Bollinger Bands data 
+            and determining whether the stock is overbought, oversold, or trending.""",
+            backstory="""As a highly skilled investment advisor, you're specialized in analyzing Bollinger Bands to
+            provide clear, actionable investment strategies for your clients.""",
+            verbose=True,
+            tools=[
+                BrowserTools.scrape_and_summarize_website,
+                SearchTools.search_internet,
+                CalculatorTools.calculate,
+                SECTools.search_10q,
+                SECTools.search_10k,
+                YahooFinanceNewsTool()
+            ]
+        )

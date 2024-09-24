@@ -106,6 +106,38 @@ class StockAnalysisTasks():
             agent=agent,
             expected_output="A comprehensive investment recommendation report, including a detailed analysis and clear investment stance, well-formatted for the customer."
         )
+    def bollinger_analysis(self, agent, bollinger_bands):
+        """
+        Create a new task to analyze Bollinger Bands.
 
+        Args:
+            agent: The financial analyst agent responsible for analyzing the Bollinger Bands.
+            bollinger_bands (dict): The calculated Bollinger Bands.
+
+        Returns:
+            Task: The task object for analyzing Bollinger Bands.
+        """
+        description = dedent(f"""
+            Analyze the provided Bollinger Bands data, which includes the Upper Band, Lower Band, 
+            and the Moving Average for the stock. Based on these indicators, assess whether the stock 
+            is overbought, oversold, or trending sideways. Additionally, provide insights into any 
+            trading opportunities that the bands might suggest.
+
+            Your final answer MUST be a comprehensive report discussing whether the stock is overbought 
+            or oversold based on the Bollinger Bands, along with any potential trading opportunities.
+
+            Bollinger Bands Data:
+            - Upper Band: {bollinger_bands['Upper Band'].iloc[-1]}
+            - Lower Band: {bollinger_bands['Lower Band'].iloc[-1]}
+            - Moving Average: {bollinger_bands['Moving Average'].iloc[-1]}
+        """)
+
+        # Creating and returning the Task object
+        return Task(
+            description=description,
+            agent=agent,
+            expected_output="A report analyzing the Bollinger Bands data with insights into potential trading opportunities."
+        )
+    
     def __tip_section(self):
         return "If you do your BEST WORK, I'll give you a $10,000 commission!"
