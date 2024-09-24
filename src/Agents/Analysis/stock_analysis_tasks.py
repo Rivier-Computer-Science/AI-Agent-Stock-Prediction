@@ -109,3 +109,36 @@ class StockAnalysisTasks():
 
     def __tip_section(self):
         return "If you do your BEST WORK, I'll give you a $10,000 commission!"
+    
+    def macd_analysis(self, agent, macd_data):
+        """
+        Create a task to analyze the MACD signals and provide actionable trading advice.
+
+        Args:
+            agent: The MACD Trading Advisor agent.
+            macd_data (pd.DataFrame): The calculated MACD data with columns for MACD line, Signal line, and MACD histogram.
+
+        Returns:
+            Task: A task to analyze the MACD signals and give trading advice.
+        """
+        description = dedent(f"""
+            Analyze the provided MACD data, which includes the MACD Line, Signal Line, 
+            and MACD Histogram. Based on these indicators, assess whether the stock 
+            is showing bullish, bearish, or neutral signals. Additionally, provide 
+            trading recommendations based on the MACD crossover or divergence.
+
+            Your final answer MUST be a comprehensive report discussing whether the 
+            stock is in a bullish or bearish phase and provide buy, sell, or hold recommendations.
+
+            MACD Data:
+            - MACD Line: {macd_data['MACD Line'].iloc[-1]}
+            - Signal Line: {macd_data['Signal Line'].iloc[-1]}
+            - MACD Histogram: {macd_data['MACD Histogram'].iloc[-1]}
+        """)
+
+        # Create and return the Task object
+        return Task(
+            description=description,
+            agent=agent,
+            expected_output="A report analyzing MACD signals with trading recommendations."
+        )

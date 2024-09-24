@@ -79,3 +79,28 @@ class StockAnalysisAgents():
         YahooFinanceNewsTool()
       ]
     )
+  
+  def macd_trading_advisor(self):
+        """
+        Returns an agent that interprets MACD signals (bullish/bearish) and provides trading insights
+        to help traders make better decisions and improve their profitability.
+        """
+        return Agent(
+            llm=gpt_model,
+            role='MACD Trading Advisor',
+            goal="""Interpret MACD signals and provide actionable insights on market trends. 
+            Help traders identify potential bullish or bearish movements and offer advice 
+            on whether to buy, sell, or hold a stock.""",
+            backstory="""As an expert in technical analysis, this agent specializes in MACD interpretation. 
+            It uses its deep knowledge of stock market trends to assist traders in making informed decisions 
+            based on the MACD signals.""",
+            verbose=True,
+            tools=[
+                BrowserTools.scrape_and_summarize_website,
+                SearchTools.search_internet,
+                CalculatorTools.calculate,
+                SECTools.search_10q,
+                SECTools.search_10k,
+                YahooFinanceNewsTool()
+            ]
+        )
