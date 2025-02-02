@@ -1,0 +1,164 @@
+# Import necessary libraries
+import re
+import json
+
+class ScenarioInputAgent:
+    def __init__(self):
+        self.tax_keywords = ["tax", "taxation", "liability", "optimization"]
+        self.signal_keywords = ["buy", "sell", "hold", "trade", "signal"]
+        self.testing_keywords = ["backtest", "forward test", "strategy validation"]
+
+    def process_input(self, user_input):
+        """
+        Analyze user input and route the request to the appropriate agent based on keywords.
+        """
+        # Clean up the user input
+        cleaned_input = self.clean_input(user_input)
+
+        # Identify the type of query based on keywords
+        if self.contains_tax_keywords(cleaned_input):
+            return self.route_to_tax_agent(cleaned_input)
+        
+        elif self.contains_signal_keywords(cleaned_input):
+            return self.route_to_signal_agent(cleaned_input)
+
+        elif self.contains_testing_keywords(cleaned_input):
+            return self.route_to_testing_agent(cleaned_input)
+
+        else:
+            return self.handle_unknown_input()
+
+    def clean_input(self, user_input):
+        """
+        Clean the user input by removing unnecessary spaces and converting to lowercase for easier processing.
+        """
+        return user_input.strip().lower()
+
+    def contains_tax_keywords(self, cleaned_input):
+        """
+        Check if the input contains any tax-related keywords.
+        """
+        return any(keyword in cleaned_input for keyword in self.tax_keywords)
+
+    def contains_signal_keywords(self, cleaned_input):
+        """
+        Check if the input contains any stock signal-related keywords.
+        """
+        return any(keyword in cleaned_input for keyword in self.signal_keywords)
+
+    def contains_testing_keywords(self, cleaned_input):
+        """
+        Check if the input contains any testing-related keywords.
+        """
+        return any(keyword in cleaned_input for keyword in self.testing_keywords)
+
+    def route_to_tax_agent(self, cleaned_input):
+        """
+        Route the request to the Tax Rules Agent.
+        """
+        print("Routing to Tax Rules Agent...")
+        tax_data = self.extract_tax_data(cleaned_input)
+        # Here we would send tax_data to the Tax Rules Agent for processing
+        return tax_data
+
+    def route_to_signal_agent(self, cleaned_input):
+        """
+        Route the request to the Signal Generation Agent.
+        """
+        print("Routing to Signal Generation Agent...")
+        signal_data = self.extract_signal_data(cleaned_input)
+        # Here we would send signal_data to the Signal Generation Agent for processing
+        return signal_data
+
+    def route_to_testing_agent(self, cleaned_input):
+        """
+        Route the request to the Backtesting or Forward Testing Agent.
+        """
+        print("Routing to Testing Agent...")
+        testing_data = self.extract_testing_data(cleaned_input)
+        # Here we would send testing_data to the Backtesting or Forward Testing Agent for processing
+        return testing_data
+
+    def handle_unknown_input(self):
+        """
+        Handle cases where the input doesn't match any recognized keywords.
+        """
+        print("Unrecognized input. Please provide a valid query.")
+        return {"error": "Unrecognized input"}
+
+    def extract_tax_data(self, cleaned_input):
+        """
+        Extract necessary tax-related information from the input.
+        """
+        # Example of extracting specific data like jurisdiction
+        jurisdiction = self.extract_jurisdiction(cleaned_input)
+        return {"action": "tax_analysis", "jurisdiction": jurisdiction}
+
+    def extract_signal_data(self, cleaned_input):
+        """
+        Extract necessary stock signal-related information from the input.
+        """
+        # Example: Parsing for signals like buy/sell/hold
+        action = self.extract_action(cleaned_input)
+        return {"action": action}
+
+    def extract_testing_data(self, cleaned_input):
+        """
+        Extract necessary testing-related information from the input.
+        """
+        # Example: Identifying backtest or forward test
+        test_type = self.extract_test_type(cleaned_input)
+        return {"test_type": test_type}
+
+    def extract_jurisdiction(self, cleaned_input):
+        """
+        Placeholder function to extract jurisdiction from the input.
+        """
+        # Example, looking for country names or codes (mock implementation)
+        if "us" in cleaned_input:
+            return "US"
+        elif "uk" in cleaned_input:
+            return "UK"
+        else:
+            return "Global"
+
+    def extract_action(self, cleaned_input):
+        """
+        Placeholder function to extract the action (buy/sell/hold) from the input.
+        """
+        if "buy" in cleaned_input:
+            return "buy"
+        elif "sell" in cleaned_input:
+            return "sell"
+        elif "hold" in cleaned_input:
+            return "hold"
+        else:
+            return "unknown"
+
+    def extract_test_type(self, cleaned_input):
+        """
+        Placeholder function to identify the type of test (backtest/forward test).
+        """
+        if "backtest" in cleaned_input:
+            return "backtest"
+        elif "forward test" in cleaned_input:
+            return "forward test"
+        else:
+            return "unknown"
+
+
+# Example usage
+scenario_input_agent = ScenarioInputAgent()
+
+# Example user input
+user_query = "What are the tax implications for my investment in the US?"
+result = scenario_input_agent.process_input(user_query)
+print(json.dumps(result, indent=2))
+
+user_query2 = "Generate a buy signal for Apple based on RSI and MACD"
+result2 = scenario_input_agent.process_input(user_query2)
+print(json.dumps(result2, indent=2))
+
+user_query3 = "Backtest my strategy using historical data"
+result3 = scenario_input_agent.process_input(user_query3)
+print(json.dumps(result3, indent=2))
