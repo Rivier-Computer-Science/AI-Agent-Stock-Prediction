@@ -1,77 +1,73 @@
-
-
 import re
-from pydantic import BaseModel, Field
-from textwrap import dedent
-import crewai as crewai
-from datetime import datetime
-import os
-from src.Agents.base_agent import BaseAgent
-from src.Agents.Analysis.Tools.search_tools import SearchTools
+from typing import Dict, Any
+from crewai import Agent, Task
 
+class ScenarioInputAgent(Agent):
+    """
+    A CrewAI agent to process user queries by extracting relevant tasks and routing them
+    to appropriate internal processing modules.
+    """
 
-class ScenarioInputAgent(BaseAgent):
-    def __init__(self, **kwargs):
+    def __init__(self):
         super().__init__(
-            role='Scenario Input Agent',
-            goal="Provide comprehensive market scenarios affecting portfolio tickers",
-            backstory='An expert in market analysis and reporting',
-            tools=[SearchTools.search_news],
-            **kwargs)
-        
-        self.previous_report = None
-
-    def get_scenarios_from_news(self):
-        if os.name == 'nt':  # For Windows
-            formatted_date = datetime.now().strftime('%b %#d, %Y')  # Example: 'Jan 1, 2024'
-        else:  # For Unix/Linux/Mac
-            formatted_date = datetime.now().strftime('%b %-d, %Y')  
-
-        return crewai.Task(
-            description=dedent(f"""
-                Collect and summarize recent news articles, press
-                releases, and market analyses related to events that
-                could affect tickers in the portfolio.
-                               
-                Pay special attention to any inflation, interest rate,
-                and large movements in the stock market.
-                                                         
-               Make sure to use the most recent data as possible. Do not consider news older than 1 week from {formatted_date}.
-
-               "If you do your BEST WORK, I'll give you a $10,000 commission!"
-          
-          
-            """),
-            agent=self,
-            expected_output="A comprehensive report on recent market scenarios"
+            name="Scenario Input Agent",
+            role="Market Analysis and Routing Agent",
+            goal="Process user queries and provide relevant market analysis",
+            backstory="An expert in market analysis and reporting, ensuring accurate task delegation."
         )
-    
-    def revise_report(self):       
-        # Define the revision task logic
-        def task_logic():
-            # Prepare the prompt for the agent
-            prompt = dedent(f"""
-                As the Scenario Input Agent, you are tasked with revising your previous market scenarios report based on the critique provided by the Scenario Input Critic Agent.
-                
-                **Instructions:**
+        self.supported_tasks = {
+            "tax analysis": "Tax Calculation Module",
+            "stock trading": "Trading Signal Module",
+            "backtesting": "Backtesting Module",
+            "forward testing": "Live Testing Module",
+            "visualization": "Data Visualization Module"
+        }
 
-                - Carefully read the critique and identify all the points that need to be addressed.
-                - Revise your report to incorporate the feedback, ensuring that all suggestions are implemented.
-                - Enhance the level of detail, analysis, and clarity in your report.
-                - Focus on providing comprehensive market scenarios affecting SPY, DIA, and AGG.
-                - Ensure that the report is well-structured, accurate, and insightful.
+    def extract_tasks(self, user_query: str) -> Dict[str, Any]:
+        """Extract relevant tasks from user input."""
+        identified_tasks = [task for task in self.supported_tasks if task in user_query.lower()]
+        if not identified_tasks:
+            return {"error": "No recognizable tasks found. Please refine your request."}
 
-                Please provide the revised report below without including these instructions or any meta-commentary.
-            """)
-            # Return the prompt for the agent to process
-            return prompt
+        return {
+            "tasks": identified_tasks,
+            "modules": [self.supported_tasks[task] for task in identified_tasks]
+        }
 
-        return crewai.Task(
-            description=dedent("""
-                Revise your previous market scenarios report based on the critique provided by the Scenario Input Critic Agent.
-                Ensure that all feedback is addressed, and the report is enhanced accordingly.
-            """),
+    def validate_query(self, user_query: str) -> bool:
+        """Ensure the query meets basic structure requirements."""
+        return len(user_query.split()) >= 3 and any(char.isalnum() for char in user_query)
+
+    def process_query(self, user_query: str) -> Dict[str, Any]:
+        """Process and route the user query to relevant modules."""
+        if not self.validate_query(user_query):
+            return {"error": "Invalid query. Please provide more details."}
+
+        return self.extract_tasks(user_query)
+
+    def create_task(self, user_query: str) -> Task:
+        """Create a CrewAI Task to process the user query."""
+        return Task(
+            description=f"Analyze and process the following user request: {user_query}",
             agent=self,
-            expected_output="An improved market scenarios report",
-            action=task_logic  
+            expected_output="Detailed analysis and routing of the user request."
         )
+
+    def integrate_portfolio_data(self, portfolio_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Simulate integration with a portfolio data system."""
+        if not portfolio_data:
+            return {"error": "Portfolio data is missing."}
+
+        return {"message": "Portfolio data successfully processed.", "data": portfolio_data}
+
+# Example usage
+if __name__ == "__main__":
+    agent = ScenarioInputAgent()
+    user_query = "I need tax analysis and stock trading insights."
+    print(agent.process_query(user_query))
+
+    task = agent.create_task(user_query)
+    print(task)
+
+    portfolio_data = {"stocks": ["AAPL", "GOOGL"], "balance": 50000}
+    print(agent.integrate_portfolio_data(portfolio_data))
