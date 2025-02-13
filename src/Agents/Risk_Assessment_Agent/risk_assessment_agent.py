@@ -1,86 +1,78 @@
-from crewai import Agent
 from src.Agents.base_agent import BaseAgent
-import numpy as np
-import pandas as pd
+import crewai as crewai
+from pydantic import PrivateAttr
+from textwrap import dedent
+from src.Indicators.risk_metrics_kb import RiskMetricsKB
 
 class RiskAssessmentAgent(BaseAgent):
-    def __init__(self):
+    _portfolio_data: dict = PrivateAttr()
+    _risk_metrics: RiskMetricsKB = PrivateAttr()
+    
+    def __init__(self, **kwargs):
         super().__init__(
             role='Risk Assessment Specialist',
-            goal='Analyze portfolio risk metrics and provide accurate risk assessments',
-            backstory="""You are an expert in financial risk assessment with deep 
-            knowledge of VaR calculations, drawdown analysis, and portfolio metrics."""
+            goal=dedent("""
+                Analyze portfolio risk metrics and provide comprehensive risk assessments
+                using historical data and scenario analysis.
+            """),
+            backstory=dedent("""
+                Expert in financial risk assessment with extensive experience in
+                portfolio analysis, risk metrics calculation, and scenario simulation.
+            """),
+            **kwargs
+        )
+    
+    def calculate_portfolio_risk(self, portfolio_data):
+        """Calculate portfolio risk metrics task"""
+        self._portfolio_data = portfolio_data
+        self._risk_metrics = RiskMetricsKB(data=portfolio_data)
+        
+        return crewai.Task(
+            description=dedent("""
+                Calculate and analyze comprehensive portfolio risk metrics including:
+                1. Value at Risk (VaR) at multiple confidence levels
+                2. Historical drawdowns and recovery analysis
+                3. Volatility measures and trends
+                4. Asset correlations and diversification metrics
+            """),
+            agent=self,
+            expected_output=dedent("""
+                Dictionary containing:
+                - VaR calculations at 95% and 99% confidence
+                - Historical drawdown series
+                - Rolling volatility metrics
+                - Correlation analysis
+            """)
+        )
+    
+    def analyze_asset_risks(self):
+        """Analyze risk metrics by asset class"""
+        return crewai.Task(
+            description=dedent("""
+                Break down risk metrics by asset class and analyze:
+                1. Risk contribution of each asset class
+                2. Correlation between asset classes
+                3. Risk-adjusted performance metrics
+            """),
+            agent=self,
+            expected_output="Asset class risk breakdown and analysis"
+        )
+    
+    def validate_metrics(self):
+        """Validate calculated risk metrics"""
+        return crewai.Task(
+            description=dedent("""
+                Validate risk calculations through:
+                1. Historical backtesting
+                2. Scenario analysis comparison
+                3. Metric stability assessment
+            """),
+            agent=self,
+            expected_output="Validation results and confidence metrics"
         )
 
-    def calculate_portfolio_risk(self, portfolio_data):
-        """Calculate comprehensive portfolio risk metrics"""
-        try:
-            returns = self._calculate_returns(portfolio_data)
-            risk_metrics = {
-                'var_95': self._calculate_var(returns, 0.95),
-                'var_99': self._calculate_var(returns, 0.99),
-                'drawdown': self._calculate_drawdown(portfolio_data),
-                'volatility': self._calculate_volatility(returns),
-                'sharpe_ratio': self._calculate_sharpe_ratio(returns)
-            }
-            return risk_metrics
-        except Exception as e:
-            self.verbose_print(f"Error calculating portfolio risk: {str(e)}")
-            return None
-
-    def analyze_asset_class_risks(self, portfolio_data):
-        """Analyze risk metrics by asset class"""
-        try:
-            asset_classes = portfolio_data.groupby('asset_class')
-            risk_by_class = {}
-            
-            for asset_class, data in asset_classes:
-                returns = self._calculate_returns(data)
-                risk_by_class[asset_class] = {
-                    'var_95': self._calculate_var(returns, 0.95),
-                    'volatility': self._calculate_volatility(returns)
-                }
-            return risk_by_class
-        except Exception as e:
-            self.verbose_print(f"Error analyzing asset class risks: {str(e)}")
-            return None
-
-    def validate_risk_metrics(self, risk_metrics, historical_data):
-        try:
-            validation_results = {
-                'var_breaches': self._validate_var(risk_metrics['var_95'], historical_data),
-                'volatility_stability': self._validate_volatility(risk_metrics['volatility'])
-            }
-            return validation_results
-        except Exception as e:
-            self.verbose_print(f"Error validating risk metrics: {str(e)}")
-            return None
-
-    def _calculate_returns(self, data):
-        return data['Close'].pct_change().dropna()
-
-    def _calculate_var(self, returns, confidence_level):
-        return np.percentile(returns, (1 - confidence_level) * 100)
-
-    def _calculate_drawdown(self, data):
-        prices = data['Close']
-        peak = prices.expanding().max()
-        drawdown = (prices - peak) / peak
-        return drawdown.min()
-
-    def _calculate_volatility(self, returns):
-        return returns.std() * np.sqrt(252)
-
-    def _calculate_sharpe_ratio(self, returns, risk_free_rate=0.02):
-        excess_returns = returns - risk_free_rate/252
-        return np.sqrt(252) * excess_returns.mean() / returns.std()
-
-    def _validate_var(self, var, historical_data):
-        actual_returns = self._calculate_returns(historical_data)
-        var_breaches = (actual_returns < var).mean()
-        return var_breaches
-
-    def _validate_volatility(self, volatility, window=30):
-        """Validate volatility stability"""
-        rolling_vol = volatility.rolling(window=window).std()
-        return rolling_vol.mean()
+    def get_risk_metrics(self):
+        """Get calculated risk metrics"""
+        if hasattr(self, '_risk_metrics'):
+            return self._risk_metrics.analyze_risk_metrics()
+        return None
