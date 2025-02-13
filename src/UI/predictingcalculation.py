@@ -6,6 +6,7 @@ import yfinance as yf
 from crewai import Agent, Crew, Task
 
 from src.Agents.input import process_user_input  # Import Week 1 function
+from src.Agents.visualisation import visualize_portfolio_impact
 
 
 # Function to interpret the time frame for Yahoo Finance
@@ -90,7 +91,7 @@ def run_stock_prediction(user_query):
         return {"error": "Failed to extract stock details."}
 
     stock_symbol = extracted_data.get("stock_symbol")
-    percentage_change = extracted_data.get("percentage_change")
+    percentage_change = float(extracted_data.get("percentage_change").replace('%', ''))
     time_frame = extracted_data.get("time_frame")
 
     if not (stock_symbol and percentage_change is not None and time_frame):
@@ -101,7 +102,13 @@ def run_stock_prediction(user_query):
     if not (start_date and end_date):
         return {"error": "Invalid time frame format."}
 
-    return get_stock_prediction(stock_symbol, percentage_change, start_date, end_date)
+    prediction_result = get_stock_prediction(stock_symbol, percentage_change, start_date, end_date)
+
+    if prediction_result:
+        visualize_portfolio_impact(prediction_result)  # New visualization call
+
+    return prediction_result
+
 
 # Streamlit UI
 def main():
