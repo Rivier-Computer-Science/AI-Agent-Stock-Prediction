@@ -3,8 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 import plotly.graph_objs as go
-from src.Indicators.High_pass_filter_function import highpass_filter
-from src.Indicators.SuperSmoother_filter_function import super_smoother
+from Filters.high_pass_2pole_filter import highpass_filter
+from Filters.low_pass_2pole_filter import super_smoother
 
 class DataFetcher:
     def __init__(self, symbol, start_date: datetime = None, end_date: datetime = None):
