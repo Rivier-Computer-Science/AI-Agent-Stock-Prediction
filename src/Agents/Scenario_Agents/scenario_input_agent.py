@@ -1,4 +1,5 @@
 
+
 import re
 from pydantic import BaseModel, Field
 from textwrap import dedent
@@ -74,4 +75,3 @@ class ScenarioInputAgent(BaseAgent):
             expected_output="An improved market scenarios report",
             action=task_logic  
         )
-
