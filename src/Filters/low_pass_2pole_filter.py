@@ -140,15 +140,4 @@ class TestSuperSmoother(unittest.TestCase):
                                msg="DC gain should be near 1 for a low-pass filter.")
 
 if __name__ == '__main__':
-
-class DataFetcher:
-    def __init__(self, symbol, start_date=None, end_date=None):
-        self.symbol = symbol
-        self.start_date = start_date if start_date else (datetime.today() - timedelta(days=60)).strftime('%Y-%m-%d')
-        self.end_date = end_date if end_date else datetime.today().strftime('%Y-%m-%d')
-
-    def get_stock_data(self):
-        df = yf.download(self.symbol, start=self.start_date, end=self.end_date)
-        return df['Close']
-    
     unittest.main()
