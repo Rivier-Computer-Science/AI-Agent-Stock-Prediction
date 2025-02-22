@@ -2,8 +2,8 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
-#import plotly.graph_objs as go
-#from plotly.subplots import make_subplots
+import plotly.graph_objs as go
+from plotly.subplots import make_subplots
 from src.Indicators.High_pass_filter_function import highpass_filter
 from src.Indicators.SuperSmoother_filter_function import super_smoother
 
@@ -48,12 +48,14 @@ def griffiths_predictor(close_prices, length=18, lower_bound=18, upper_bound=40,
     predictions = np.zeros_like(close_prices)
 
     for t in range(length, len(lp)):
-        if np.abs(lp[t]) > peak:
-            peak = np.abs(lp[t])
+
+        if abs(lp[t]) > peak:
+            peak = abs(lp[t])
+
         signal = lp[t] / peak if peak != 0 else 0
 
         xx[:-1] = xx[1:]
-        xx[-1] = signal[-1]
+        xx[-1] = signal[-1]  
 
         prediction = np.dot(xx, coef)
         predictions[t] = prediction
@@ -65,13 +67,13 @@ def griffiths_predictor(close_prices, length=18, lower_bound=18, upper_bound=40,
     for i in range(bars_fwd):
         future_signal = np.dot(xx, coef)
         future_signals[i] = future_signal
-        xx[:-1] = xx[1:]  
-        xx[-1] = future_signal 
+        xx[:-1] = xx[1:]
+        xx[-1] = future_signal
 
     return predictions, future_signals
 
 
-"""
+
 # Usage example:
 symbol = 'ES=F'
 start_date = datetime(2023, 9, 1)
@@ -97,47 +99,66 @@ if price_data is not None:
 
     
     dates = pd.date_range(start='2023-09-01', periods=100, freq='D')
-    original_prices = np.random.normal(5000, 200, size=100)  # Simulated price data
-    predicted_prices = np.random.normal(0.3, 0.1, size=100)  # Simulated prediction data
+    original_prices = np.random.normal(5000, 200, size=100)  
+    predicted_prices = np.random.normal(0.3, 0.1, size=100)  
+    filtered_hp = highpass_filter(price_data.values, period=40)
 
-    # Create DataFrame
+    filtered_hp = np.array([x[0] if isinstance(x, (np.ndarray, list)) else x for x in filtered_hp])
+
+    print(f"Length of price data: {len(price_data)}, Length of filtered_hp: {len(filtered_hp)}")
+
+    print("Filtered Data (Red Line) Sample:", filtered_hp[:10])
+    print("Min:", np.min(filtered_hp), "Max:", np.max(filtered_hp))
+    #print(f"Length of predicted signal: {len(predicted_signal)}")
+
+    smoothed = super_smoother(filtered_hp, period=18)
+    cleaned_data = [x[0] if isinstance(x, (list, np.ndarray)) else x for x in smoothed]
+
+    filtered_data = np.array(cleaned_data)
+
+
+
     results_df = pd.DataFrame({
         'Date': dates,
         'Original Prices': original_prices,
         'Predicted Prices': predicted_prices
     })
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = make_subplots(specs=[[{"secondary_y": False}]])
 
-    # Add trace for Original Prices on the primary y-axis
+    #(Red Line)
     fig.add_trace(
-        go.Scatter(x=results_df['Date'], y=results_df['Original Prices'], name='Original Prices', mode='lines'),
-        secondary_y=False  # Primary y-axis
+        go.Scatter(
+            x=price_data.index,
+            y = super_smoother(highpass_filter(price_data.values, period=40), period=18),
+            mode='lines',
+            name='Band-Limited & Normalized Data (Red)',
+            line=dict(color='red')
+        )
     )
 
-    # Add trace for Predicted Prices on the secondary y-axis
+    #(Blue Line)
     fig.add_trace(
-        go.Scatter(x=results_df['Date'], y=results_df['Predicted Prices'], name='Predicted Prices', mode='lines', line=dict(color='red')),
-        secondary_y=True   # Secondary y-axis
+        go.Scatter(
+            x=price_data.index,
+            y=predicted_prices,
+            mode='lines',
+            name='Predictions (Blue)',
+            line=dict(color='blue')
+        )
     )
 
-    # Update layout with titles and axis labels
     fig.update_layout(
-        title='Comparison of Original and Predicted Stock Prices',
-        xaxis_title='Date',
-        yaxis_title='Original Prices ($)',
-        yaxis2=dict(
-            title='Predicted Prices',
-            overlaying='y',
-            side='right'
-        ),
-        template='plotly_dark'
+        title="Swing Trading Predictions for E-Mini S&P",
+        xaxis_title="Date",
+        yaxis_title="Normalized Price",
+        template="plotly_dark",
+        showlegend=True
     )
 
-    # Show the figure
     fig.show()
     mse = np.mean(np.square(predicted_prices - price_data.values))
     print("Mean Squared Error:", mse)
 else:
     print("No data available.")
-"""
+

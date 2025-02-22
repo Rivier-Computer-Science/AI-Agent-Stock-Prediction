@@ -108,39 +108,47 @@ class CycleDetector:
         return to_float_list(close_series)
 
     def calculate_cycles(self, close_prices):
+
         close_prices = to_float_list(close_prices)
+        if len(close_prices) < self.length:
+            raise ValueError(
+                f"Not enough data to compute cycles with length={self.length}. "
+                f"Got {len(close_prices)} data points."
+            )
 
         hp = highpass_filter(close_prices, self.upper_bound)
         lp = super_smoother(hp, self.lower_bound)
-
         lp_arr = np.array(lp, dtype=float)
 
         peak = 0.1
-        current_peak = np.max(np.abs(lp_arr)) if len(lp_arr) > 0 else 0
+        current_peak = np.max(np.abs(lp_arr))
         if current_peak > peak:
             peak = current_peak
-
         if peak != 0:
             signal = lp_arr / peak
         else:
             signal = np.zeros_like(lp_arr)
 
-        if len(signal) < self.length:
-            raise ValueError(f"Not enough data for length={self.length}. Got {len(signal)} data points.")
-
-        xx = np.array([signal[self.length - i - 1] for i in range(self.length)])
         coefficients = np.zeros(self.length)
+        xx = np.zeros(self.length)
+
+
+        for i in range(len(signal)):
+            xx[1:] = xx[:-1]
+            xx[0] = signal[i]
+
+            if i >= self.length - 1:
+                x_bar = np.dot(xx, coefficients)
+                coefficients += self.mu * (xx[0] - x_bar) * xx
+
         power = np.zeros((self.upper_bound + 1, 2))
         max_power = 0.0
         dominant_cycle = 0
 
-        x_bar = np.dot(xx, coefficients)
-        coefficients += self.mu * (xx[-1] - x_bar) * xx
-
         for period in range(self.lower_bound, self.upper_bound + 1):
             real_part = np.sum(coefficients * np.cos(2 * np.pi * np.arange(1, self.length + 1) / period))
             imag_part = np.sum(coefficients * np.sin(2 * np.pi * np.arange(1, self.length + 1) / period))
-            denom = (1 - real_part)**2 + (imag_part**2)
+            denom = (1 - real_part)**2 + imag_part**2
             power_val = 0.1 / denom if denom != 0 else 0
             power[period, 1] = power_val
 
@@ -157,7 +165,7 @@ class CycleDetector:
 
 """
 # Example usage:
-detector = CycleDetector('AAPL', '2023-01-01', '2023-12-31')
+detector = CycleDetector('ES=F', '2024-01-01', '2024-12-31')
 data = detector.fetch_data()
 if len(data) == 0:
     print("No data available or data is empty.")
