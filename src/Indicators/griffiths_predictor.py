@@ -36,6 +36,7 @@ class GriffithsPredictor:
             bars_fwd (int): Number of future periods to forecast.
             peak_decay (float): Decay factor applied to the running peak.
             initial_peak (float, optional): Initial peak value. If None, computed from the input series.
+            scale_to_price (bool, optional): Linear prediction scaling of dimensionless predictor back to price
         """
         self.close_prices = np.asarray(close_prices)
         self.make_stationary = make_stationary
@@ -138,7 +139,7 @@ class GriffithsPredictor:
         if len(s) != 0:
             init_peak = np.max(np.abs(s[-window:])) if len(s) >= window else np.max(np.abs(s))
         
-        print(f"Initial peak = {init_peak}")
+        #print(f"Initial peak = {init_peak}")
         return init_peak
 
 
@@ -174,7 +175,9 @@ class GriffithsPredictor:
         #    Peak = .991 * Peak[1]
         #    If AbsValue(LP) > Peak Then Peak = AbsValue(LP)
         #    Signal = LP / Peak (if Peak != 0)
-        # We'll do that bar-by-bar.
+        #
+        # Note: statioinary pct change and log difference can stay near
+        #       zero for a long time before the peak decays significantly
         n = len(lp)
         signal = np.zeros(n)
         peak_array = np.zeros(n)
