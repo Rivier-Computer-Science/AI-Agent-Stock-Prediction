@@ -49,7 +49,7 @@ class DataFetcher:
 
         # Download data from Yahoo Finance
         df = yf.download(symbol, start=start_date_str, end=end_date_str, interval=interval)
-        df.index = pd.to_datetime(df.index)
+        df.columns = df.columns.droplevel('Ticker')  # yfinance changed API's to include the Ticker as a column tuple     
 
         if df.empty:
             raise ValueError(f"No data returned for symbol {symbol}")

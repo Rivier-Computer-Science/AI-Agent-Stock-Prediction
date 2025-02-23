@@ -119,6 +119,7 @@ if __name__ == '__main__':
     data_feed = bt.feeds.PandasData(dataname=data,  # Your custom pandas DataFrame
                                     fromdate=start,
                                     todate=end) 
+    print("Backtrader sees len(data_feed):", len(data_feed))
 
     print("*********************************************")
     print("************* SMA CROSS *********************")
