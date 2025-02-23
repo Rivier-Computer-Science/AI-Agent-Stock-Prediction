@@ -162,16 +162,12 @@ class GriffithsPredictor:
         # ------------------------------------------------------
         # 1) EHLERS FILTERS: HP & LP
         # ------------------------------------------------------
-        # Because Ehlers code does:
-        #    HP = $HighPass(Close, UpperBound)
-        #    LP = $SuperSmoother(HP, LowerBound)
         hp = highpass_2pole_filter(self.input_series, self.upper_bound)
         lp = super_smoother(hp, self.lower_bound)
 
         # ------------------------------------------------------
         # 2) CREATE THE 'signal' ARRAY WITH PEAK TRACKING
         # ------------------------------------------------------
-        # In Ehlers code:
         #    Peak = .991 * Peak[1]
         #    If AbsValue(LP) > Peak Then Peak = AbsValue(LP)
         #    Signal = LP / Peak (if Peak != 0)
@@ -202,7 +198,6 @@ class GriffithsPredictor:
         
         # Fill xx so that xx[0] is the oldest among those 'length' bars
         # and xx[-1] is the newest.
-        # Exactly like Ehlers snippet:
         #   For count=1 to Length:
         #       XX[count] = Signal[Length - count];
         # except we do it in Python indexing:
@@ -218,9 +213,6 @@ class GriffithsPredictor:
         # ------------------------------------------------------
         # 4) MAIN LOOP: LMS ADAPTATION
         # ------------------------------------------------------
-        # We'll adapt from t = length up to the end. (Ehlers code does
-        # its array indexing differently, but conceptually it starts
-        # updating once we have length samples.)
         for t in range(self.length, len(signal)):
             # The newest normalized sample is signal[t].
             # Shift 'xx' left by 1
@@ -235,13 +227,11 @@ class GriffithsPredictor:
             prediction = np.dot(reversed_xx, coef)
             predictions[t] = prediction
 
-            # Error = newest sample (reversed_xx[0]) - predicted
             error = reversed_xx[0] - prediction
-            # Coeff update
             coef += mu * error * reversed_xx
 
         # ------------------------------------------------------
-        # 5) FORECAST FUTURE VALUES (still in normalized domain)
+        # 5) FORECAST FUTURE VALUES 
         # ------------------------------------------------------
         future_signals = np.zeros(self.bars_fwd)
         for i in range(self.bars_fwd):
