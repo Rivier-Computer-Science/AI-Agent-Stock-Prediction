@@ -19,6 +19,7 @@ class GriffithsPredictor:
         bars_fwd: int = 2,
         peak_decay: float = 0.991,
         initial_peak: float = None,
+        scale_to_price: bool = False
     ):
         """
         Initializes the Griffiths Predictor.
@@ -44,8 +45,7 @@ class GriffithsPredictor:
         self.upper_bound = upper_bound
         self.bars_fwd = bars_fwd
         self.peak_decay = peak_decay
-
-        self.denormalize = True    # Denormalize if price data    
+        self.scale_to_price = scale_to_price 
         
         # Convert close_prices to a numpy array and squeeze to ensure a 1D array.
         self.close_prices = np.asarray(close_prices).squeeze()
@@ -53,8 +53,7 @@ class GriffithsPredictor:
             raise ValueError("close_prices must be a 1D array after squeezing.")
         
         # Define the input series based on the flags.
-        if self.make_stationary:
-            self.denormalize = False
+        if self.make_stationary:            
             self.input_series = np.zeros_like(self.close_prices, dtype=float)
             if len(self.close_prices) > 1:
                 if self.use_log_diff:
@@ -254,7 +253,7 @@ class GriffithsPredictor:
         # --------------------------------------------------
         # 6) SCALE BACK TO PRICE USING LINEAR APPROXIMATION
         # -------------------------------------------------
-        if self.denormalize:
+        if self.scale_to_price:
             predictions, future_signals = self.scale_predictions_to_price(self.close_prices, predictions, future_signals)
 
         return predictions, future_signals

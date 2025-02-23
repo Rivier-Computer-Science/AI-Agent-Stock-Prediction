@@ -38,28 +38,28 @@ def main():
     date_index = close_prices.index  
 
     # Plot Figure: Two subplots, top for percent change, bottom for price forecast.
-    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(14, 18), sharex=False)
+    fig, axes = plt.subplots(nrows=4, ncols=1, figsize=(14, 18), sharex=False)
 
-    # Plot Percent Change
-    stationary_type = gp_pct_change.stationary_type
-    axes[0].plot(date_index, gp_pct_change.input_series, label=f"{stationary_type}", color="blue")
-    axes[0].plot(date_index, pct_predictions, label=f"Predicted {stationary_type}", color="orange", linestyle="--")
-    axes[0].plot(future_dates, future_pct, label=f"Future Predicted {stationary_type}", marker="o", linestyle="-", color="green")
-    axes[0].set_title(f"{ticker} Daily {stationary_type} (Stationary Predictor)")
-    axes[0].set_ylabel(stationary_type)
+    # Plot Price in Filter Space
+    #axes[1].plot(date_index, gp_price.input_series, label="Close Price", color="blue")
+    axes[0].plot(date_index, price_predictions, label="Predicted Price", color="orange", linestyle="--")
+    axes[0].plot(future_dates, future_price_direct, label="Future Price Forecast", marker="o", linestyle="-", color="green")
+    axes[0].set_title(f"{ticker} Price Forecast")
+    axes[0].set_xlabel("Date")
+    axes[0].set_ylabel("Price")
     axes[0].legend()
     axes[0].grid(True)
 
-    # Plot Price in Filter Space
-    axes[1].plot(date_index, gp_price.input_series, label="Close Price", color="blue")
-    axes[1].plot(date_index, price_predictions, label="Predicted Price", color="orange", linestyle="--")
-    axes[1].plot(future_dates, future_price_direct, label="Future Price Forecast", marker="o", linestyle="-", color="green")
-    axes[1].set_title(f"{ticker} Price Forecast")
-    axes[1].set_xlabel("Date")
-    axes[1].set_ylabel("Price")
+     # Plot Percent Change
+    stationary_type = gp_pct_change.stationary_type
+    axes[1].plot(date_index, gp_pct_change.input_series, label=f"{stationary_type}", color="blue")
+    axes[1].plot(date_index, pct_predictions, label=f"Predicted {stationary_type}", color="orange", linestyle="--")
+    axes[1].plot(future_dates, future_pct, label=f"Future Predicted {stationary_type}", marker="o", linestyle="-", color="green")
+    axes[1].set_title(f"{ticker} Daily {stationary_type} (Stationary Predictor)")
+    axes[1].set_ylabel(stationary_type)
     axes[1].legend()
     axes[1].grid(True)
-
+ 
     # Plot Log Difference
     stationary_type = gp_log_diff.stationary_type
     axes[2].plot(date_index, gp_log_diff.input_series, label=f"{stationary_type}", color="blue")
