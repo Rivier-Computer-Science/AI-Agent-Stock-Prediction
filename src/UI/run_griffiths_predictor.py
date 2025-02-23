@@ -5,75 +5,70 @@ import numpy as np
 from src.Data_Retrieval.data_fetcher import DataFetcher
 from src.Indicators.griffiths_predictor import GriffithsPredictor
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-from src.Data_Retrieval.data_fetcher import DataFetcher
-from src.Indicators.griffiths_predictor import GriffithsPredictor
-
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-from src.Data_Retrieval.data_fetcher import DataFetcher
-from src.Indicators.griffiths_predictor import GriffithsPredictor
-
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-from src.Data_Retrieval.data_fetcher import DataFetcher
-from src.Indicators.griffiths_predictor import GriffithsPredictor
 
 def main():
-    print("Fetching data for ticker AAPL")
-    df = DataFetcher().get_stock_data(symbol="AAPL")
+    ticker = "AAPL"
+    df = DataFetcher().get_stock_data(symbol=ticker)
     close_prices = df["Close"]
 
-    # Compute daily percent change and fill NaN with 0 so that the length is preserved.
-    pct_change = close_prices.pct_change().fillna(0)
-    date_index = pct_change.index
+    # Option 0: Use stationary (percent change) data.
+    gp_pct_change = GriffithsPredictor(close_prices, make_stationary=True)
+    pct_predictions, future_pct = gp_pct_change.predict_stationary()
+    #pct_price_pred, future_price_from_pct = gp_pct_change.predict_price()
 
-    # Instantiate the predictor with the close price series.
-    gp = GriffithsPredictor(close_prices)
+    # Option 1: Use original (price) data.
+    gp_price = GriffithsPredictor(close_prices, make_stationary=False)
+    price_predictions, future_price_direct = gp_price.predict_price()
 
-    # Get percent change predictions and future price forecast.
-    pct_predictions, future_price = gp.predict_price()
+    # Option 2: Use stationary (log difference) data
+    gp_log_diff = GriffithsPredictor(close_prices, make_stationary=True, use_log_diff=True)
+    log_predictions, future_log = gp_log_diff.predict_stationary()
+    #log_price_pred, future_price_from_log = gp_log_diff.predict_price()
 
-    # Compute a historical predicted price series using positional indexing with .iloc.
-    predicted_price = np.empty(len(close_prices))
-    predicted_price[:gp.length] = np.nan  # No prediction for the first 'length' periods.
-    for t in range(gp.length, len(close_prices)):
-        # Use one-step forecast: predicted price at time t equals the previous close price times (1 + predicted percent change)
-        predicted_price[t] = close_prices.iloc[t - 1] * (1 + pct_predictions[t])
     
-    # Generate future dates for the future price forecast (assuming business days).
-    last_date = date_index[-1]
+    # Generate future dates (assuming business days) for future predictions.
+    # Assume future predictions (both pct and price) have the same length.
+    num_future = len(future_pct)
+    last_date = close_prices.index[-1]
     future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1),
-                                 periods=len(future_price),
+                                 periods=num_future,
                                  freq="B")
 
-    # Create one figure with two subplots.
-    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(14, 12), sharex=False)
+    
+    date_index = close_prices.index  
 
-    # Top subplot: Plot historical and predicted percent changes.
-    axes[0].plot(date_index, pct_change.values, label="Historical Percent Change", color="blue")
-    axes[0].plot(date_index, pct_predictions, label="Predicted Percent Change", color="orange", linestyle="--")
-    axes[0].set_title("AAPL Daily Percent Change with Predictor")
-    axes[0].set_ylabel("Percent Change")
+    # Plot Figure: Two subplots, top for percent change, bottom for price forecast.
+    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(14, 18), sharex=False)
+
+    # Plot Percent Change
+    stationary_type = gp_pct_change.stationary_type
+    axes[0].plot(date_index, gp_pct_change.input_series, label=f"{stationary_type}", color="blue")
+    axes[0].plot(date_index, pct_predictions, label=f"Predicted {stationary_type}", color="orange", linestyle="--")
+    axes[0].plot(future_dates, future_pct, label=f"Future Predicted {stationary_type}", marker="o", linestyle="-", color="green")
+    axes[0].set_title(f"{ticker} Daily {stationary_type} (Stationary Predictor)")
+    axes[0].set_ylabel(stationary_type)
     axes[0].legend()
     axes[0].grid(True)
 
-    # Bottom subplot: Plot actual close prices, historical predicted price, and future price forecast.
-    axes[1].plot(close_prices.index, close_prices.values, label="Actual Close Price", color="blue")
-    axes[1].plot(close_prices.index, predicted_price, label="Historical Predicted Price", color="orange", linestyle="--")
-    axes[1].plot(future_dates, future_price, label="Future Price Forecast", marker="o", linestyle="-", color="green")
-    axes[1].set_title("AAPL Price Forecast with Predictor")
+    # Plot Price
+    axes[1].plot(date_index, gp_price.input_series, label="Close Price", color="blue")
+    axes[1].plot(date_index, price_predictions, label="Predicted Price", color="orange", linestyle="--")
+    axes[1].plot(future_dates, future_price_direct, label="Future Price Forecast", marker="o", linestyle="-", color="green")
+    axes[1].set_title(f"{ticker} Price Forecast")
     axes[1].set_xlabel("Date")
     axes[1].set_ylabel("Price")
     axes[1].legend()
     axes[1].grid(True)
+
+    # Plot Log Difference
+    stationary_type = gp_log_diff.stationary_type
+    axes[2].plot(date_index, gp_log_diff.input_series, label=f"{stationary_type}", color="blue")
+    axes[2].plot(date_index, log_predictions, label=f"Predicted {stationary_type}", color="orange", linestyle="--")
+    axes[2].plot(future_dates, future_log, label=f"Future Predicted {stationary_type}", marker="o", linestyle="-", color="green")
+    axes[2].set_title(f"{ticker} Daily {stationary_type} (Stationary Predictor)")
+    axes[2].set_ylabel(stationary_type)
+    axes[2].legend()
+    axes[2].grid(True)
 
     plt.tight_layout()
     plt.show()
