@@ -50,7 +50,7 @@ def main():
     axes[0].legend()
     axes[0].grid(True)
 
-    # Plot Price
+    # Plot Price in Filter Space
     axes[1].plot(date_index, gp_price.input_series, label="Close Price", color="blue")
     axes[1].plot(date_index, price_predictions, label="Predicted Price", color="orange", linestyle="--")
     axes[1].plot(future_dates, future_price_direct, label="Future Price Forecast", marker="o", linestyle="-", color="green")
