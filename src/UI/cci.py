@@ -4,17 +4,23 @@ import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 
+# For real-time auto-refresh (refresh every 60 seconds)
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st.warning("Optional: Install streamlit_autorefresh to enable auto-refresh in real-time mode.")
+
 # -------------------------------------------
 # Function to fetch stock data from Yahoo Finance
 # -------------------------------------------
 def fetch_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     """
-    Fetch historical stock data for the given ticker symbol.
+    Fetch historical (or real-time) stock data for the given ticker symbol.
     
     Parameters:
     - ticker: Stock ticker symbol (e.g., 'AAPL').
-    - period: Data period to fetch (e.g., '1y' for one year).
-    - interval: Data interval (e.g., '1d' for daily data).
+    - period: Data period to fetch (e.g., '1y' for one year or '1d' for real-time mode).
+    - interval: Data interval (e.g., '1d' for daily data or '1m' for real-time).
     
     Returns:
     - DataFrame containing the stock data.
@@ -48,13 +54,10 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     For example, if all columns end with the same ticker name, remove it.
     """
     cols = df.columns.tolist()
-    # Split each column name by whitespace
     split_cols = [col.split() for col in cols]
-    # Check if all columns have at least two tokens and share the same last token
     if all(len(tokens) >= 2 for tokens in split_cols):
         last_tokens = [tokens[-1] for tokens in split_cols]
         if len(set(last_tokens)) == 1:
-            # Remove the trailing token from each column name
             new_cols = [' '.join(tokens[:-1]) for tokens in split_cols]
             df.columns = new_cols
     return df
@@ -73,32 +76,18 @@ def calculate_cci(data: pd.DataFrame, period: int = 20) -> pd.Series:
     Returns:
     - A Pandas Series representing the CCI.
     """
-    # Flatten columns if necessary
     data = flatten_columns(data)
-    
-    # Standardize the column names by removing trailing tokens (e.g., ticker name)
     data = standardize_columns(data)
-    
-    # Convert column names to lowercase for consistency
     data.columns = data.columns.str.lower().str.strip()
     
-    # Check if required columns exist
     if not {"high", "low", "close"}.issubset(data.columns):
         st.error("Data must contain 'High', 'Low', and 'Close' columns.")
         return pd.Series(dtype=float)
     
-    # Calculate the Typical Price
     tp = (data['high'] + data['low'] + data['close']) / 3.0
-
-    # Calculate the moving average of the Typical Price
     ma = tp.rolling(window=period).mean()
-    
-    # Calculate the mean deviation
     md = tp.rolling(window=period).apply(lambda x: np.mean(np.abs(x - np.mean(x))), raw=True)
-    
-    # Calculate CCI using the formula: (TP - MA) / (0.015 * MD)
     cci = (tp - ma) / (0.015 * md)
-    
     return cci
 
 # -------------------------------------------
@@ -110,8 +99,24 @@ def main():
     # Sidebar for user inputs
     st.sidebar.header("Configuration")
     ticker = st.sidebar.text_input("Ticker Symbol", value="AAPL")
-    period_str = st.sidebar.selectbox("Data Period", options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y"], index=3)
-    interval = st.sidebar.selectbox("Data Interval", options=["1d", "1wk", "1mo"], index=0)
+    
+    # Real-time mode toggle
+    realtime_mode = st.sidebar.checkbox("Enable Real-Time Data", value=False)
+    
+    # Set period and interval based on mode
+    if realtime_mode:
+        period_str = "1d"
+        interval = "1m"
+        st.sidebar.info("Real-Time Mode: Using period=1d and interval=1m")
+        # Auto-refresh every 60 seconds if st_autorefresh is available
+        try:
+            st_autorefresh(interval=60000, limit=100, key="datarefresh")
+        except Exception as e:
+            st.error("Auto-refresh not enabled. Ensure streamlit_autorefresh is installed.")
+    else:
+        period_str = st.sidebar.selectbox("Data Period", options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y"], index=3)
+        interval = st.sidebar.selectbox("Data Interval", options=["1d", "1wk", "1mo"], index=0)
+    
     cci_period = st.sidebar.number_input("CCI Calculation Period", min_value=5, max_value=50, value=20, step=1)
     
     # Additional Customization Options for Chart Display
@@ -135,7 +140,7 @@ def main():
         stock_data = fetch_stock_data(ticker, period=period_str, interval=interval)
         if not stock_data.empty:
             st.subheader("Fetched Stock Data")
-            st.dataframe(stock_data.tail(10))  # Display last 10 rows
+            st.dataframe(stock_data.tail(10))
             st.session_state['stock_data'] = stock_data
         else:
             st.error("Failed to fetch data.")
@@ -148,8 +153,6 @@ def main():
             stock_data = st.session_state['stock_data']
             st.info("Calculating CCI...")
             cci_series = calculate_cci(stock_data, period=cci_period)
-            
-            # Add CCI to the DataFrame
             stock_data_with_cci = stock_data.copy()
             stock_data_with_cci['CCI'] = cci_series
             

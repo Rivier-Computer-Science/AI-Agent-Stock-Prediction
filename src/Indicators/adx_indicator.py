@@ -15,8 +15,7 @@ class ADXIndicator:
 
     def calculate(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate the Average Directional Index (ADX), along with +DI and -DI,
-        using vectorized operations.
+        Calculate the Average Directional Index (ADX), along with +DI and -DI.
 
         Parameters:
             data (pd.DataFrame): Historical data with 'High', 'Low', and 'Close' columns.
