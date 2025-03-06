@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-""" Fetch historical stock data """
+
 class DataFetcher:
     def __init__(self, start_date: datetime = None, end_date: datetime = None):
         self.start_date = start_date or datetime.today() - timedelta(days=365)  # Default: 1 Year
@@ -17,12 +17,12 @@ class DataFetcher:
             df.index = pd.to_datetime(df.index)
 
             if df.empty:
-                raise ValueError(f"❌ No data available for {symbol}. Check the stock symbol.")
+                raise ValueError(f" No data available for {symbol}. Check the stock symbol.")
             
             return df
         except Exception as e:
-            print(f"⚠️ Error fetching data: {e}")
-            return pd.DataFrame()  # Return empty DataFrame on failure
+            print(f" Error fetching data: {e}")
+            return pd.DataFrame()  
 
 """Indicator 1: Ultimate Strength Index (USI)"""
 def calculate_su_sd(prices):
@@ -30,10 +30,9 @@ def calculate_su_sd(prices):
     Calculate Strength Up (SU) and Strength Down (SD).
     Fixes the `axis 1 is out of bounds` error by ensuring prices is a 1D array.
     """
-    prices = np.asarray(prices).flatten()  # Ensure 1D NumPy array
-
+    prices = np.asarray(prices).flatten()  
     if len(prices) == 0:
-        raise ValueError("❌ Price data is empty. Ensure stock data is fetched correctly.")
+        raise ValueError(" Price data is empty. Ensure stock data is fetched correctly.")
 
     su = np.maximum(np.diff(prices, prepend=prices[0]), 0)
     sd = np.maximum(-np.diff(prices, prepend=prices[0]), 0)
