@@ -8,7 +8,9 @@ import matplotlib
 matplotlib.use('Agg')  # Set non-interactive backend
 import matplotlib.pyplot as plt
 # Import USI calculation functions from usi_calculation.py
-from .usi_calculation import calculate_su_sd, ultimate_smoother, calculate_usi
+#from .usi_calculation import calculate_su_sd, ultimate_smoother, calculate_usi
+from src.Data_Retrieval.data_fetcher import DataFetcher
+from .usi_trendvsswing import calculate_usi
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -25,23 +27,6 @@ USI_DEFAULTS = {
 def dict_to_params(d: dict) -> tuple:
     return tuple((k, v) for k, v in d.items())
 
-#####################################
-# Fetch Data Directly with yfinance
-#####################################
-def fetch_yfinance_data(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
-    try:
-        df = yf.download(symbol, start=start.strftime('%Y-%m-%d'), 
-                        end=end.strftime('%Y-%m-%d'), auto_adjust=True)
-        df.index = pd.to_datetime(df.index)
-        if df.empty:
-            raise ValueError(f"No data available for {symbol}")
-        logging.info(f"Fetched data for {symbol}, shape: {df.shape}")
-        df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        logging.info(f"Adjusted columns: {list(df.columns)}")
-        return df
-    except Exception as e:
-        logging.error(f"Error fetching data for {symbol}: {e}")
-        return pd.DataFrame()
 
 #####################################
 # USI Indicator wrapped for BT using imported functions
@@ -53,16 +38,37 @@ class USIIndicatorBT(bt.Indicator):
     def __init__(self):
         self.addminperiod(self.p.period + self.p.smoothing_period)
 
-    def next(self):
-        # Fetch prices for the required period
-        prices = self.data.close.get(size=self.p.period + self.p.smoothing_period)
-        if len(prices) >= self.p.period + self.p.smoothing_period:
-            # Use imported functions for USI calculation
-            su, sd = calculate_su_sd(prices)
-            usi = calculate_usi(su, sd, period=self.p.period, smoothing_period=self.p.smoothing_period)
-            self.lines.usi_signal[0] = usi[-1]  # Set the latest USI value
-        else:
-            self.lines.usi_signal[0] = 0  # Default to 0 if insufficient data
+        size = self.data.buflen() 
+        predictions = np.zeros(size)
+
+        self.usi_values = calculate_usi(
+            prices=data['Close'].values,
+            period=self.p.period,
+            smoothing_period=self.p.smoothing_period
+        )
+
+
+    # Assign indicator values to backtrader
+    def once(self, start, end):
+        for i in range(self.data.buflen()):
+            self.lines.usi_signal[i] = self.usi_values[i] 
+
+    # def next(self):
+    #     # Fetch prices for the required period
+    #     prices = self.data.close.get(size=self.p.period + self.p.smoothing_period)
+    #     if len(prices) >= self.p.period + self.p.smoothing_period:
+    #         # Use imported functions for USI calculation
+    #         su, sd = calculate_su_sd(prices)
+    #         usi = calculate_usi(su, sd, period=self.p.period, smoothing_period=self.p.smoothing_period)
+    #         self.lines.usi_signal[0] = usi[-1]  # Set the latest USI value
+    #     else:
+    #         self.lines.usi_signal[0] = 0  # Default to 0 if insufficient data
+
+
+
+
+
+
 
 #######################################
 # Strategy with One Buy Signal at a Time
@@ -75,30 +81,67 @@ class USICrossStrategy(bt.Strategy):
                                     period=self.p.period,
                                     smoothing_period=self.p.smoothing_period)
         self.usi_signal = self.usi_ind.usi_signal
-        self.has_bought = False  # Track if we've bought without selling
+        self.is_long = False  
+        self.is_short = False
 
-    def next(self):
-        current_date = self.datas[0].datetime.date(0)
+    def bullish_cross(self, prev_bar, current_bar):
+        if prev_bar < 0 and current_bar > 0:
+            return True
+        
+        return False
+
+    def bearish_cross(self, prev_bar, current_bar):
+        if prev_bar > 0 and current_bar < 0:
+            return True
+        
+        return False
+
+    def buy_all(self):
+        if self.is_long: return
+
+        if self.is_short:
+            self.close()
+
+        price = self.data.close[0]
         cash = self.broker.getcash()
-        allocation_used = cash * self.p.allocation
+        size = int(cash/price)
 
+        if size > 0:
+            current_date = self.datas[0].datetime.date(0)
+            self.buy(size=size)
+            logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
+            self.is_long = True
+            self.is_short = False
+
+
+    def sell_all(self):
+        if self.is_short: return
+
+        if self.is_long:
+            self.close()
+
+        price = self.data.close[0]
+        cash = self.broker.getcash()
+        size = int(cash/price)
+
+        if size > 0:
+            current_date = self.datas[0].datetime.date(0)
+            self.sell(size=size)
+            logging.info(f"{current_date}: SELL {size} shares at {price:.2f}")
+            self.is_short = True
+            self.is_long = False
+
+
+    def next(self):        
         usi_val = self.usi_signal[0]
         usi_prev = self.usi_signal[-1] if len(self.usi_signal) > 1 else 0
 
-        if not self.position and not self.has_bought:  # No position and haven't bought yet
-            if usi_val > 0 and usi_prev <= 0:  # Bullish crossover
-                price = self.data.close[0]
-                size = int(allocation_used // price)
-                self.buy(size=size)
-                self.has_bought = True
-                logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
-        elif self.position:  # In a position
-            if usi_val < 0 and usi_prev >= 0:  # Bearish crossover
-                size = self.position.size
-                price = self.data.close[0]
-                self.sell(size=size)
-                self.has_bought = False
-                logging.info(f"{current_date}: SELL {size} shares at {price:.2f}")
+        if self.bullish_cross(usi_prev, usi_val):
+            self.buy_all()
+
+        if self.bearish_cross(usi_prev, usi_val):
+            self.sell_all()
+                
 
 class BuyAndHold(bt.Strategy):
     params = (('allocation', 1.0),)
@@ -157,14 +200,14 @@ if __name__ == '__main__':
     cash = 10000
     commission = 0.001
 
-    symbol = 'NVDA'
+    symbol = 'SPY'
     start = datetime.now() - timedelta(days=365)
     end = datetime.now()
 
-    data = fetch_yfinance_data(symbol=symbol, start=start, end=end)
+    data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end)
 
     if data.empty:
-        logging.error("No data fetched for NVDA")
+        logging.error(f"No data fetched for {symbol}")
         exit()
 
     data_feed = bt.feeds.PandasData(dataname=data, fromdate=start, todate=end)
