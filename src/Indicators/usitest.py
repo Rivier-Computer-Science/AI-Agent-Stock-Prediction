@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # Import USI calculation functions from usi_calculation.py
 #from .usi_calculation import calculate_su_sd, ultimate_smoother, calculate_usi
 from src.Data_Retrieval.data_fetcher import DataFetcher
-from .usi_trendvsswing import calculate_usi
+from .usi_jg import calculate_usi
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,126 +36,141 @@ class USIIndicatorBT(bt.Indicator):
     params = dict_to_params(USI_DEFAULTS)
 
     def __init__(self):
-        self.addminperiod(self.p.period + self.p.smoothing_period)
+        self.addminperiod(USI_DEFAULTS['period'] + 2*USI_DEFAULTS['smoothing_period'])
 
         size = self.data.buflen() 
         predictions = np.zeros(size)
 
-        self.usi_values = calculate_usi(
-            prices=data['Close'].values,
-            period=self.p.period,
-            smoothing_period=self.p.smoothing_period
+        self.usi_df = calculate_usi(
+            df=data,
+            length=self.p.period,
+            window=self.p.smoothing_period
         )
+
+        # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        #     print("usi_values\n", self.usi_df)
 
 
     # Assign indicator values to backtrader
     def once(self, start, end):
         for i in range(self.data.buflen()):
-            self.lines.usi_signal[i] = self.usi_values[i] 
-
-    # def next(self):
-    #     # Fetch prices for the required period
-    #     prices = self.data.close.get(size=self.p.period + self.p.smoothing_period)
-    #     if len(prices) >= self.p.period + self.p.smoothing_period:
-    #         # Use imported functions for USI calculation
-    #         su, sd = calculate_su_sd(prices)
-    #         usi = calculate_usi(su, sd, period=self.p.period, smoothing_period=self.p.smoothing_period)
-    #         self.lines.usi_signal[0] = usi[-1]  # Set the latest USI value
-    #     else:
-    #         self.lines.usi_signal[0] = 0  # Default to 0 if insufficient data
-
-
-
-
+            self.lines.usi_signal[i] = self.usi_df[i] 
 
 
 
 #######################################
 # Strategy with One Buy Signal at a Time
 #######################################
+
 class USICrossStrategy(bt.Strategy):
     params = dict_to_params(USI_DEFAULTS)
 
     def __init__(self):
         self.usi_ind = USIIndicatorBT(self.data, 
-                                    period=self.p.period,
-                                    smoothing_period=self.p.smoothing_period)
+                                      period=self.p.period,
+                                      smoothing_period=self.p.smoothing_period)
         self.usi_signal = self.usi_ind.usi_signal
-        self.is_long = False  
-        self.is_short = False
+        self.order = None
+        self.pending_entry = None
 
     def bullish_cross(self, prev_bar, current_bar):
-        if prev_bar < 0 and current_bar > 0:
-            return True
-        
-        return False
+        return prev_bar < 0 and current_bar >= 0
 
     def bearish_cross(self, prev_bar, current_bar):
-        if prev_bar > 0 and current_bar < 0:
-            return True
-        
-        return False
+        return prev_bar > 0 and current_bar <= 0
 
-    def buy_all(self):
-        if self.is_long: return
+    def log_position(self):
+        pos_size = self.position.size if self.position else 0
+        pos_type = 'NONE'
+        if pos_size > 0:
+            pos_type = 'LONG'
+        elif pos_size < 0:
+            pos_type = 'SHORT'
+        logging.info(f"{self.data.datetime.date(0)}: POSITION UPDATE: {pos_type} {pos_size} shares")
 
-        if self.is_short:
-            self.close()
+    def notify_order(self, order):
+        date = self.data.datetime.date(0)
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                logging.info(f"{date}: BUY EXECUTED, Price: {order.executed.price:.2f}, Size: {order.executed.size}")
+            elif order.issell():
+                logging.info(f"{date}: SELL EXECUTED, Price: {order.executed.price:.2f}, Size: {order.executed.size}")
 
-        price = self.data.close[0]
-        cash = self.broker.getcash()
-        size = int(cash/price)
+            self.log_position()
 
-        if size > 0:
-            current_date = self.datas[0].datetime.date(0)
-            self.buy(size=size)
-            logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
-            self.is_long = True
-            self.is_short = False
+            # Enter pending position after close executes
+            if self.pending_entry:
+                cash = self.broker.getcash()
+                price = self.data.close[0]
+                size = int((cash / price) * 0.95)
+                if size > 0:
+                    if self.pending_entry == 'LONG':
+                        self.order = self.buy(size=size)
+                        logging.info(f"{date}: BUY {size} shares at {price:.2f}")
+                    elif self.pending_entry == 'SHORT':
+                        self.order = self.sell(size=size)
+                        logging.info(f"{date}: SELL {size} shares at {price:.2f}")
+                self.pending_entry = None
 
+            self.log_position()
 
-    def sell_all(self):
-        if self.is_short: return
+        elif order.status in [order.Margin, order.Rejected]:
+            logging.warning(f"{self.data.datetime.date(0)}: Order Failed - Margin/Rejected")
+            self.order = None
+            self.pending_entry = None
 
-        if self.is_long:
-            self.close()
+        if order.status in [order.Completed, order.Canceled, order.Margin, order.Rejected]:
+            self.order = None
 
-        price = self.data.close[0]
-        cash = self.broker.getcash()
-        size = int(cash/price)
+    def next(self):
+        date = self.data.datetime.date(0)
+        if self.order:
+            return  # Wait for pending order to complete
 
-        if size > 0:
-            current_date = self.datas[0].datetime.date(0)
-            self.sell(size=size)
-            logging.info(f"{current_date}: SELL {size} shares at {price:.2f}")
-            self.is_short = True
-            self.is_long = False
-
-
-    def next(self):        
         usi_val = self.usi_signal[0]
         usi_prev = self.usi_signal[-1] if len(self.usi_signal) > 1 else 0
 
         if self.bullish_cross(usi_prev, usi_val):
-            self.buy_all()
+            if self.position:
+                if self.position.size < 0:  # Short position active
+                    logging.info(f"{date}: CLOSING SHORT POSITION BEFORE GOING LONG")
+                    self.order = self.close()
+                    self.pending_entry = 'LONG'
+            else:
+                size = int((self.broker.getcash() / self.data.close[0]) * 0.95)
+                if size > 0:
+                    self.order = self.buy(size=size)
+                    logging.info(f"{date}: BUY {size} shares at {self.data.close[0]:.2f}")
 
-        if self.bearish_cross(usi_prev, usi_val):
-            self.sell_all()
-                
+        elif self.bearish_cross(usi_prev := self.usi_signal[-1], self.usi_signal[0]):
+            if self.position:
+                if self.position.size > 0:  # Long position active
+                    logging.info(f"{date}: CLOSING LONG POSITION BEFORE GOING SHORT")
+                    self.order = self.close()
+                    self.pending_entry = 'SHORT'
+            else:
+                size = int((self.broker.getcash() / self.data.close[0]) * 0.95)
+                if size > 0:
+                    self.order = self.sell(size=size)
+                    logging.info(f"{date}: SELL {size} shares at {self.data.close[0]:.2f}")
+
 
 class BuyAndHold(bt.Strategy):
-    params = (('allocation', 1.0),)
+    params = (
+        ('allocation', 1.0),  # Allocate 100% of the available cash to buy and hold (adjust as needed)
+    )
 
     def __init__(self):
-        pass
+        pass  # No need for indicators in Buy-and-Hold strategy
 
     def next(self):
         current_date = self.datas[0].datetime.date(0)
-        if not self.position:
-            cash = self.broker.getcash()
-            price = self.data.close[0]
-            size = int((cash * self.params.allocation) // price)
-            self.buy(size=size)
+        # Check if we already have a position (buy once and hold)
+        if not self.position:  # If not in a position
+            cash = self.broker.getcash()  # Get available cash
+            price = self.data.close[0]  # Current price of the asset
+            size = (cash * self.params.allocation) // price  # Buy with the allocated cash
+            self.buy(size=size)  # Execute the buy order with calculated size
             logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
 
 #######################################
@@ -164,6 +179,7 @@ class BuyAndHold(bt.Strategy):
 def run_backtest(strategy_class, data_feed, cash=10000, commission=0.001):
     cerebro = bt.Cerebro(runonce=True, preload=True)
     cerebro.addstrategy(strategy_class)
+    cerebro.addsizer(bt.sizers.PercentSizer, percents=95) #prevent partial fills
     cerebro.adddata(data_feed)
     cerebro.broker.setcash(cash)
     cerebro.broker.setcommission(commission)
@@ -193,8 +209,8 @@ def run_backtest(strategy_class, data_feed, cash=10000, commission=0.001):
 
     logging.info("Generating plot...")
     cerebro.plot()
-    plt.savefig(f"{strategy_class.__name__}_plot.png")
-    logging.info(f"Plot saved as {strategy_class.__name__}_plot.png")
+    #plt.savefig(f"{strategy_class.__name__}_plot.png")
+    #logging.info(f"Plot saved as {strategy_class.__name__}_plot.png")
 
 if __name__ == '__main__':
     cash = 10000
@@ -204,7 +220,7 @@ if __name__ == '__main__':
     start = datetime.now() - timedelta(days=365)
     end = datetime.now()
 
-    data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end)
+    data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end).resample('D').last().dropna()
 
     if data.empty:
         logging.error(f"No data fetched for {symbol}")
