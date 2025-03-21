@@ -56,6 +56,9 @@ class FinancialCrew:
         # Print signals manually
         bollinger_data.manually_compute_buy_sell_hold_signals()
 
+        # Plot the data
+        bollinger_data.plot_bollinger_band_data()
+
         # Initialize agents
         bollinger_investment_advisor_agent = BollingerAnalysisAgent(llm=gpt_4o_high_tokens)
         bollinger_buy_sell_agent = BollingerBuySellAgent(ticker=self.ticker, llm=gpt_4o_high_tokens)
@@ -110,7 +113,7 @@ class FinancialCrew:
         # Kickoff CrewAI agents and tasks
         crew = crewai.Crew(
             agents=agents,
-            tasks=tasks_3critiques,
+            tasks=tasks_baseline,
             verbose=True,
             process=crewai.Process.sequential
         )

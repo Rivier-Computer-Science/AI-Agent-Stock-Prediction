@@ -1,5 +1,7 @@
 import pandas as pd
 import pandas_ta as ta
+import matplotlib.pyplot as plt
+import os
 
 class BollingerBands:
     def __init__(self, data: pd.DataFrame, length: int=20, std: int=2):
@@ -29,7 +31,7 @@ class BollingerBands:
         suffix = f"{self.length}_{self.std:.1f}"
         rename_dict = {
             f"BBL_{suffix}": "Lower Band",
-            f"BBM_{suffix}": "Middle Band",
+            f"BBM_{suffix}": "Moving Average",
             f"BBU_{suffix}": "Upper Band"
         }
         df.rename(columns=rename_dict, inplace=True)
@@ -67,3 +69,24 @@ class BollingerBands:
         df = df[df['Signal'].isin(['BUY', 'SELL'])]
         df = df.loc[:, ['Signal']]
         return df
+    
+    def plot_bollinger_band_data(self):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"   # For WSL
+        df = self.data
+        # Plotting
+        plt.figure(figsize=(12, 6))
+        plt.plot(df['Close'], label='Close Price', color='black', linewidth=1.5)
+        plt.plot(df['Upper Band'], label='Upper Band', color='red', linestyle='--')
+        plt.plot(df['Moving Average'], label='Moving Average', color='blue')
+        plt.plot(df['Lower Band'], label='Lower Band', color='green', linestyle='--')
+
+        # Optional: Fill the band area
+        plt.fill_between(df.index, df['Upper Band'], df['Lower Band'], color='gray', alpha=0.2)
+
+        plt.title('Bollinger Bands with Price')
+        plt.xlabel('Time')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
