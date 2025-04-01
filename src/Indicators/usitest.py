@@ -131,7 +131,7 @@ def run_backtest(strategy_class, data_feed, cash=10000, commission=0.001):
 
     logging.info(f"Running {strategy_class.__name__} Strategy...")
     result = cerebro.run()
-    
+
     strat = result[0]
     sharpe = strat.analyzers.sharpe.get_analysis()
     returns = strat.analyzers.returns.get_analysis()
