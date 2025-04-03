@@ -27,4 +27,3 @@ def calculate_usi(df, length=14, window=4):
 
     return pd.Series(usi, index=df.index)
 
-
