@@ -26,3 +26,4 @@ def calculate_usi(df, length=14, window=4):
     usi = np.where((usu + usd) != 0, (usu - usd) / (usu + usd), 0)
 
     return pd.Series(usi, index=df.index)
+

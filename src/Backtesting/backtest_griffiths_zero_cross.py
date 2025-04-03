@@ -1,75 +1,102 @@
 import numpy as np
+import os
 import pandas as pd
 import backtrader as bt
 import logging
-from datetime import datetime, timedelta
-import yfinance as yf
-import matplotlib
-matplotlib.use('Agg')  # Set non-interactive backend
-import matplotlib.pyplot as plt
-# Import USI calculation functions from usi_calculation.py
-#from .usi_calculation import calculate_su_sd, ultimate_smoother, calculate_usi
+from datetime import datetime
 from src.Data_Retrieval.data_fetcher import DataFetcher
-from .usi_jg import calculate_usi
+from src.Indicators.griffiths_predictor import GriffithsPredictor
 
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(level=logging.INFO,
+                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 
 #################################
-# USI DEFAULTS (global)
+# GRIFFITHS DEFAULTS (global)
 #################################
-USI_DEFAULTS = {
-    'period': 28,
-    'smoothing_period': 4,
-    'allocation': 1.0
+GRIFFITHS_DEFAULTS = {
+    'make_stationary' : False,
+    'use_log_diff' : False,
+    'length': 18,
+    'lower_bound': 18,
+    'upper_bound': 40,
+    'bars_fwd': 2,
+    'peak_decay': 0.991,
+    'initial_peak': 0.0001,
+    'scale_to_price': False,
+    'allocation' : 1.0
 }
 
 def dict_to_params(d: dict) -> tuple:
+    """
+    Convert a dict into a Backtrader 'params' tuple,
+    i.e. { 'length': 18 } -> (('length', 18), ...)
+    """
     return tuple((k, v) for k, v in d.items())
 
-
 #####################################
-# USI Indicator wrapped for BT using imported functions
+# Indicator wrapped for BT
 #####################################
-class USIIndicatorBT(bt.Indicator):
-    lines = ('usi_signal',)
-    params = dict_to_params(USI_DEFAULTS)
+class GriffithsPredictorBT(bt.Indicator):
+    """
+    Wraps the existing indicator into a Backtrader Indicator.
+    """
+    lines = ('gp_signal',)
+    params = dict_to_params(GRIFFITHS_DEFAULTS)
 
     def __init__(self):
-        self.addminperiod(USI_DEFAULTS['period'] + 2*USI_DEFAULTS['smoothing_period'])
+        self.addminperiod(self.p.upper_bound)  # Ensure enough data is available
 
-        size = self.data.buflen() 
+        size = len(self.data)  # Get data size
         predictions = np.zeros(size)
 
-        self.usi_df = calculate_usi(
-            df=data,
-            length=self.p.period,
-            window=self.p.smoothing_period
+        close_prices = np.array(self.data.close)  # Convert to NumPy array
+
+        # Instantiate predictor
+        gp = GriffithsPredictor(
+            close_prices=close_prices, 
+            make_stationary=self.p.make_stationary,
+            use_log_diff=self.p.use_log_diff,
+            length=self.p.length,
+            lower_bound=self.p.lower_bound,
+            upper_bound=self.p.upper_bound,
+            bars_fwd=self.p.bars_fwd,
+            peak_decay=self.p.peak_decay,
+            initial_peak=self.p.initial_peak,
+            scale_to_price=self.p.scale_to_price
         )
 
-        # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-        #     print("usi_values\n", self.usi_df)
+        # Get the predictions
+        self.preds, _ = gp.predict_price()
 
-
-    # Assign indicator values to backtrader
     def once(self, start, end):
+        """
+        'once' is called when loading the full dataset in backtesting mode.
+        """
         for i in range(self.data.buflen()):
-            self.lines.usi_signal[i] = self.usi_df[i] 
-
-
+            self.lines.gp_signal[i] = self.preds[i]
 
 #######################################
-# Strategy with One Buy Signal at a Time
+# Strategy
 #######################################
-
-class USICrossStrategy(bt.Strategy):
-    params = dict_to_params(USI_DEFAULTS)
+class GriffithsCrossStrategy(bt.Strategy):
+    params = dict_to_params(GRIFFITHS_DEFAULTS)
 
     def __init__(self):
-        self.usi_ind = USIIndicatorBT(self.data, 
-                                      period=self.p.period,
-                                      smoothing_period=self.p.smoothing_period)
-        self.usi_signal = self.usi_ind.usi_signal
+        # Add our indicator to the data
+        self.gp_ind = GriffithsPredictorBT(
+            self.data,
+            length=self.p.length,
+            lower_bound=self.p.lower_bound,
+            upper_bound=self.p.upper_bound,
+            bars_fwd=self.p.bars_fwd,
+            peak_decay=self.p.peak_decay,
+            initial_peak=self.p.initial_peak,
+            scale_to_price=self.p.scale_to_price
+        )
+
+        self.gp_signal = self.gp_ind.gp_signal
         self.order = None
         self.pending_entry = None
 
@@ -127,10 +154,10 @@ class USICrossStrategy(bt.Strategy):
         if self.order:
             return  # Wait for pending order to complete
 
-        usi_val = self.usi_signal[0]
-        usi_prev = self.usi_signal[-1] if len(self.usi_signal) > 1 else 0
+        gp_val = self.gp_signal[0]
+        gp_prev = self.gp_signal[-1] if len(self.gp_signal) > 1 else 0
 
-        if self.bullish_cross(usi_prev, usi_val):
+        if self.bullish_cross(gp_prev, gp_val):
             if self.position:
                 if self.position.size < 0:  # Short position active
                     logging.info(f"{date}: CLOSING SHORT POSITION BEFORE GOING LONG")
@@ -142,7 +169,7 @@ class USICrossStrategy(bt.Strategy):
                     self.order = self.buy(size=size)
                     logging.info(f"{date}: BUY {size} shares at {self.data.close[0]:.2f}")
 
-        elif self.bearish_cross(usi_prev := self.usi_signal[-1], self.usi_signal[0]):
+        elif self.bearish_cross(gp_prev, gp_val):
             if self.position:
                 if self.position.size > 0:  # Long position active
                     logging.info(f"{date}: CLOSING LONG POSITION BEFORE GOING SHORT")
@@ -155,85 +182,80 @@ class USICrossStrategy(bt.Strategy):
                     logging.info(f"{date}: SELL {size} shares at {self.data.close[0]:.2f}")
 
 
-class BuyAndHold(bt.Strategy):
-    params = (
-        ('allocation', 1.0),  # Allocate 100% of the available cash to buy and hold (adjust as needed)
-    )
-
-    def __init__(self):
-        pass  # No need for indicators in Buy-and-Hold strategy
-
-    def next(self):
-        current_date = self.datas[0].datetime.date(0)
-        # Check if we already have a position (buy once and hold)
-        if not self.position:  # If not in a position
-            cash = self.broker.getcash()  # Get available cash
-            price = self.data.close[0]  # Current price of the asset
-            size = (cash * self.params.allocation) // price  # Buy with the allocated cash
-            self.buy(size=size)  # Execute the buy order with calculated size
-            logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
-
-#######################################
-# Backtest Runner
-#######################################
 def run_backtest(strategy_class, data_feed, cash=10000, commission=0.001):
+    #cerebro = bt.Cerebro()
     cerebro = bt.Cerebro(runonce=True, preload=True)
     cerebro.addstrategy(strategy_class)
-    cerebro.addsizer(bt.sizers.PercentSizer, percents=95) #prevent partial fills
     cerebro.adddata(data_feed)
     cerebro.broker.setcash(cash)
     cerebro.broker.setcommission(commission)
 
+    # Add analyzers to the backtest
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', riskfreerate=0.01)
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
 
+    # Run the backtest
     logging.info(f"Running {strategy_class.__name__} Strategy...")
     result = cerebro.run()
 
+    # Extract the strategy and analyzer data
     strat = result[0]
     sharpe = strat.analyzers.sharpe.get_analysis()
     returns = strat.analyzers.returns.get_analysis()
     drawdown = strat.analyzers.drawdown.get_analysis()
-    max_drawdown_duration = drawdown.get('maxdrawdownperiod', 'N/A')
+    max_drawdown_duration = drawdown.get('maxdrawdownperiod', 'N/A')  # Use 'N/A' if missing
 
+    print("Sharpe Analysis:", sharpe)
+
+
+    # Log the detailed analysis
     logging.info(f"Returns Analysis {strategy_class.__name__}:")
-    logging.info("\n%s", returns)
+    logging.info("\n%s", returns)  # Log the whole analysis dictionary
 
-    print(f"  Sharpe Ratio: {sharpe['sharperatio']:.2f}")
+    
+    sharpe_ratio = sharpe.get('sharperatio', None)
+    if sharpe_ratio is not None:
+        print(f"  Sharpe Ratio: {sharpe_ratio:.2f}")
+    else:
+        print("  Sharpe Ratio: N/A (insufficient data or all negative returns)")
     print(f"  Total Return: {returns['rtot']*100:.2f}%")
     print(f"  Avg Daily Return: {returns['ravg']*100:.2f}%")
     print(f"  Avg Annual Return: {((1+returns['ravg'])**252 - 1)*100:.2f}%")
-    print(f"  Max Drawdown: {drawdown['drawdown']*100:.2f}%")
+    print(f"  Max Drawdown: {drawdown.drawdown*100:.2f}%")
     print(f"  Max Drawdown Duration: {max_drawdown_duration}")
 
-    logging.info("Generating plot...")
     cerebro.plot()
-    #plt.savefig(f"{strategy_class.__name__}_plot.png")
-    #logging.info(f"Plot saved as {strategy_class.__name__}_plot.png")
+
 
 if __name__ == '__main__':
     cash = 10000
-    commission = 0.001
+    commission=0.001
 
     symbol = 'SPY'
-    start = datetime.now() - timedelta(days=365)
-    end = datetime.now()
+    start = datetime(2020,1,1)
+    end = datetime.today()
 
-    data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end).resample('D').last().dropna()
+    # Load the data from the Excel file
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # Get script's directory
+    data_file = os.path.join(script_dir, f"{symbol}_data.xlsx")
 
-    if data.empty:
-        logging.error(f"No data fetched for {symbol}")
-        exit()
+    print(f"Loading data from: {data_file}")
 
-    data_feed = bt.feeds.PandasData(dataname=data, fromdate=start, todate=end)
+    data = pd.read_excel(data_file, index_col='Date', parse_dates=True)
+
+    # Convert pandas DataFrame into Backtrader data feed
+    data_feed = bt.feeds.PandasData(
+        dataname=data,
+        fromdate=start,
+        todate=end,
+        timeframe=bt.TimeFrame.Minutes  # Set to minute data
+    )
+
+    print("Data columns:", data.columns)
 
     print("*********************************************")
-    print("*************** USI CROSS *******************")
+    print("************* Griffiths CROSS ***************")
     print("*********************************************")
-    run_backtest(strategy_class=USICrossStrategy, data_feed=data_feed, cash=cash, commission=commission)
+    run_backtest(strategy_class=GriffithsCrossStrategy, data_feed=data_feed, cash=cash, commission=commission )
 
-    print("\n*********************************************")
-    print("************* BUY AND HOLD ******************")
-    print("*********************************************")
-    run_backtest(strategy_class=BuyAndHold, data_feed=data_feed, cash=cash, commission=commission)

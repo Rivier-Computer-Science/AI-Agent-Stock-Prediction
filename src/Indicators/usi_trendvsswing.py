@@ -29,11 +29,23 @@ def calculate_usi(prices, period, smoothing_period=4):
     usu = ultimate_smoother(su_avg, period)
     usd = ultimate_smoother(sd_avg, period)
 
-    # Vectorized USI computation with safety checks
+    
+    # Vectorized USI computation with improved safety checks
+    # FIXED: Divide by 0
     denominator = usu + usd
-    mask = (denominator != 0) & (usu > 0.01) & (usd > 0.01)
-    usi = np.where(mask, (usu - usd) / denominator, 0)
 
+    # Avoid division by zero by ensuring denominator is never zero
+    safe_denominator = np.where(denominator != 0, denominator, np.nan)
+
+    # Compute USI safely, replacing NaNs with zeros afterward
+    usi = np.where(
+        (usu > 0.01) & (usd > 0.01),
+        (usu - usd) / safe_denominator,
+        0
+    )
+    # Replace NaNs resulting from zero denominators with zero
+    usi = np.nan_to_num(usi)
+    
     return usi
 
 def ultimate_smoother(series, period):
@@ -119,6 +131,7 @@ def plot_side_by_side_comparison():
                             row=1, col=1)
     fig.add_trace(go.Scatter(x=dates, y=usi_sma_trend, name='Trend (20-bar SMA)', 
                             line=dict(color='orange', dash='dot')), row=1, col=1)
+
 
     # Swing Trading (28 bars)
     usi_swing = calculate_usi(prices, period=28)
