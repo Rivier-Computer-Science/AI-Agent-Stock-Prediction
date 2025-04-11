@@ -4,18 +4,24 @@ load_dotenv()
 
 import os
 import sys
-
+import pandas as pd
+import datetime as dt
 
 import crewai as crewai
-from src.Agents.Research.bollinger_crew import BollingerCrew
-
+#from crewai import Crew
 from textwrap import dedent
 import logging
-
+import crewai as crewai
+import langchain_openai as lang_oai
+import crewai_tools as crewai_tools
 
 from src.Helpers.pretty_print_crewai_output import display_crew_output
 
-
+from src.Indicators.bollinger import BollingerBands  
+from src.Data_Retrieval.data_fetcher import DataFetcher  
+from src.Agents.Research.bollinger_analysis_agent import BollingerAnalysisAgent
+from src.Agents.Research.bollinger_buy_sell_agent import BollingerBuySellAgent
+from src.Agents.Research.bollinger_buy_sell_critic_agent import BollingerBuySellCriticAgent
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -26,6 +32,13 @@ if not logger.hasHandlers():
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
+gpt_4o_high_tokens = lang_oai.ChatOpenAI(
+    model_name="gpt-4o",
+    temperature=0.0,
+    max_tokens=1500
+)
+
+
 
 
 if __name__ == "__main__":
@@ -34,11 +47,11 @@ if __name__ == "__main__":
 
     ticker='nvda'    
   
-    financial_crew = BollingerCrew(ticker=ticker)
+    financial_crew = FinancialCrew(ticker=ticker)
     logging.info("Financial crew initialized successfully")
 
     try:
-        indicator, crew_output = financial_crew.run()
+        crew_output = financial_crew.run()
         logging.info("Financial crew execution run() successfully")
     except Exception as e:
         logging.error(f"Error during crew execution: {e}")
