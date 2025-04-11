@@ -47,7 +47,8 @@ class BollingerAnalysisAgent(BaseAgent):
         return Task(
             description=description,
             agent=self,
-            expected_output="A table with daily BUY and SELL signals only. Ignore HOLD signals"
+            expected_output="""A python dict with the date as the key and BUY, SELL, or HOLD as the value. " \
+                               Include an entry for every date in pandas dataframe"""
         )
    
 

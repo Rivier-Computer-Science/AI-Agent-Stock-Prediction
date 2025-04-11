@@ -110,19 +110,23 @@ class FinancialCrew:
         # Kickoff CrewAI agents and tasks
         crew = crewai.Crew(
             agents=agents,
-            tasks=tasks_3critiques,
+            tasks=tasks_baseline,
             verbose=True,
             process=crewai.Process.sequential
         )
 
         result = crew.kickoff()
+
+        task_output = buy_sell_decision.output  # Example of how to get task output
+        print("TASK OUTPUT: \n", task_output)
+
         return result
 
 if __name__ == "__main__":
     print("## Research Interation Analysis")
     print('-------------------------------')
 
-    ticker='aapl'    
+    ticker='nvda'    
   
     financial_crew = FinancialCrew(ticker=ticker)
     logging.info("Financial crew initialized successfully")

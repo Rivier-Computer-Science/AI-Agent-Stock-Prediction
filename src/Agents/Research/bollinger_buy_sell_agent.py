@@ -33,7 +33,8 @@ class BollingerBuySellAgent(BaseAgent):
                 If you predict correctly, you get to keep a 10% commission on profits.                                          
             """),
             agent=self,
-            expected_output=f"A table with buy, sell, or hold decision signals for each day of data {self.ticker}"
+            expected_output=f"""A python dict with the date as the key and BUY, SELL, or HOLD as the value. 
+                                Include an entry for every date in pandas dataframe for {self.ticker}"""
         )
     
     def revise_buy_sell_decision(self):
@@ -47,5 +48,6 @@ class BollingerBuySellAgent(BaseAgent):
                 If you predict correctly, you get to keep a 10% commission on profits.                                          
             """),
             agent=self,
-            expected_output=f"A table with buy, sell, or hold decision signals for each day of data {self.ticker}"
+            expected_output=f"""A python dict with the date as the key and BUY, SELL, or HOLD as the value. 
+                                Include an entry for every date in pandas dataframe for {self.ticker}"""
         )
