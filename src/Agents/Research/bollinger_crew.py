@@ -1,12 +1,10 @@
 import pandas as pd
-import datetime as dt
 
 import crewai as crewai
 import langchain_openai as lang_oai
 import crewai_tools as crewai_tools
 
 from src.Indicators.bollinger import BollingerBands  
-from src.Data_Retrieval.data_fetcher import DataFetcher  
 from src.Agents.Research.bollinger_analysis_agent import BollingerAnalysisAgent
 from src.Agents.Research.bollinger_buy_sell_agent import BollingerBuySellAgent
 from src.Agents.Research.bollinger_buy_sell_critic_agent import BollingerBuySellCriticAgent
@@ -19,17 +17,15 @@ gpt_4o_high_tokens = lang_oai.ChatOpenAI(
 )
 
 class BollingerCrew:
-    def __init__(self, ticker):
+    def __init__(self, ticker, stock_data, length=20, std=2):
         self.ticker = ticker
-        today = dt.datetime.today()
-        #start_date = dt.datetime(2014, 1, 1)
-        start_date = today - dt.timedelta(days=90)  # make sure inclusive
-        end_date = today        
-        self.stock_data = DataFetcher().get_stock_data(symbol=ticker, start_date=start_date, end_date=end_date )
+        self.stock_data = stock_data
+        self.length = length
+        self.std = std        
 
     def run(self):
         # Bollinger Bands Data Calculation
-        bollinger_data = BollingerBands(self.stock_data)
+        bollinger_data = BollingerBands(self.stock_data, length=self.length, std=self.std)
         bollinger_bands_data = bollinger_data.calculate_bands()
 
         # Print signals manually
@@ -57,32 +53,32 @@ class BollingerCrew:
              ]
 
 
-        tasks_1critique=[
-            analyze_bollinger_data,
-            buy_sell_decision,
-            critique_agent_decisions,
-            revise_buy_sell_decisions
-            ]
+        # tasks_1critique=[
+        #     analyze_bollinger_data,
+        #     buy_sell_decision,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions
+        #     ]
         
-        tasks_2critiques=[
-            analyze_bollinger_data,
-            buy_sell_decision,
-            critique_agent_decisions,
-            revise_buy_sell_decisions,
-            critique_agent_decisions,
-            revise_buy_sell_decisions
-            ]
+        # tasks_2critiques=[
+        #     analyze_bollinger_data,
+        #     buy_sell_decision,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions
+        #     ]
        
-        tasks_3critiques=[
-            analyze_bollinger_data,
-            buy_sell_decision,
-            critique_agent_decisions,
-            revise_buy_sell_decisions,
-            critique_agent_decisions,
-            revise_buy_sell_decisions,
-            critique_agent_decisions,
-            revise_buy_sell_decisions
-            ]
+        # tasks_3critiques=[
+        #     analyze_bollinger_data,
+        #     buy_sell_decision,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions,
+        #     critique_agent_decisions,
+        #     revise_buy_sell_decisions
+        #     ]
 
         # Kickoff CrewAI agents and tasks
         crew = crewai.Crew(
@@ -96,4 +92,4 @@ class BollingerCrew:
 
         task_output = buy_sell_decision.output  # Example of how to get task output
 
-        return task_output, result
+        return task_output.raw, result

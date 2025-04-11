@@ -4,8 +4,9 @@ load_dotenv()
 
 import os
 import sys
+import datetime as dt
 
-
+from src.Data_Retrieval.data_fetcher import DataFetcher  
 import crewai as crewai
 from src.Agents.Research.bollinger_crew import BollingerCrew
 
@@ -33,8 +34,14 @@ if __name__ == "__main__":
     print('-------------------------------')
 
     ticker='nvda'    
+
+    today = dt.datetime.today()
+    #start_date = dt.datetime(2014, 1, 1)
+    start_date = today - dt.timedelta(days=90)  # make sure inclusive
+    end_date = today        
+    stock_data = DataFetcher().get_stock_data(symbol=ticker, start_date=start_date, end_date=end_date )
   
-    financial_crew = BollingerCrew(ticker=ticker)
+    financial_crew = BollingerCrew(ticker=ticker, stock_data=stock_data, length=20, std=2.0)
     logging.info("Financial crew initialized successfully")
 
     try:

@@ -2,8 +2,12 @@ from datetime import datetime
 import logging
 import backtrader as bt
 import numpy as np
+import datetime as dt
+import ast
+
+from src.Data_Retrieval.data_fetcher import DataFetcher  
 from src.Data_Retrieval.data_fetcher import DataFetcher
-from src.Research. import GriffithsPredictor
+from src.Agents.Research.bollinger_crew import BollingerCrew
 
 
 logging.basicConfig(level=logging.INFO, 
@@ -11,72 +15,72 @@ logging.basicConfig(level=logging.INFO,
 
 
 #################################
-# GRIFFITHS DEFAULTS (global)
+# BOLLINGER DEFAULTS (global)
 #################################
-GRIFFITHS_DEFAULTS = {
-    'make_stationary' : False,
-    'use_log_diff' : False,
-    'length': 18,
-    'lower_bound': 18,
-    'upper_bound': 40,
-    'bars_fwd': 2,
-    'peak_decay': 0.991,
-    'initial_peak': 0.0001,
-    'scale_to_price': False,
+symbol = 'NVDA'
+
+BOLLINGER_DEFAULTS = {
+    'ticker': symbol,
+    'length': 20,
+    'std': 2.0,
     'allocation' : 1.0
 }
-
 
 
 def dict_to_params(d: dict) -> tuple:
     """
     Convert a dict into a Backtrader 'params' tuple,
-    i.e. { 'length': 18 } -> (('length', 18), ...)
+    i.e. { 'length': 20 } -> (('length', 20), ...)
     """
     return tuple((k, v) for k, v in d.items())
 
 #####################################
 # Indicator wrapped for BT
 #####################################
-class GriffithsPredictorBT(bt.Indicator):
+class BollingerIndicatorBT(bt.Indicator):
     """
     Wraps the existing indicator into a Backtrader Indicator.
 
-     in-sample predictions are stored in `gp_signal`.
+     in-sample predictions are stored in `bollinger_signal`.
     """
 
-    lines = ('gp_signal',) 
+    lines = ('bollinger_signal',) 
 
     # After instaniaton, params are accessed as self.p.length, etc.
-    params = dict_to_params(GRIFFITHS_DEFAULTS)
+    params = dict_to_params(BOLLINGER_DEFAULTS)
 
 
     def __init__(self):
-        self.addminperiod(self.p.upper_bound)   # Need minimum bars before computing once()
+        self.addminperiod(self.p.length)   # Need minimum bars before computing once()
 
         size = self.data.buflen() 
         predictions = np.zeros(size)
 
         # Instantiate predictor
-        gp = GriffithsPredictor(
-            close_prices=data['Close'].values,
-            make_stationary=self.p.make_stationary,
-            use_log_diff=self.p.use_log_diff,
+        bb = BollingerCrew(
+            ticker=self.p.ticker,
+            stock_data=data,
             length=self.p.length,
-            lower_bound=self.p.lower_bound,
-            upper_bound=self.p.upper_bound,
-            bars_fwd=self.p.bars_fwd,
-            peak_decay=self.p.peak_decay,
-            initial_peak=self.p.initial_peak,
-            scale_to_price=self.p.scale_to_price
+            std=self.p.std            
         )
 
+
         # Get the predictions
-        self.preds, _ = gp.predict_price()          
+        indicator_output, _ = bb.run()
+        indicator_dict = ast.literal_eval(indicator_output)
+        print("*******************************************************\n\n" )
+        #list(indicator_values.values())
+
+        if isinstance(indicator_dict, dict):
+            print("Object is a dictionary.")
+        else:
+            print(f"Object is not a dictionary. It is of type: {type(indicator_dict).__name__}")
+
+        self.preds =  indicator_dict.values()       
 
 
     # ----------------------------------------------------------------------
-    # Assign the precomputed Griffith Predictions to gp_signal
+    # Assign the precomputed Bollinger Signals to bollinger_signal
     # ----------------------------------------------------------------------
     def once(self, start, end):
         """
@@ -85,29 +89,25 @@ class GriffithsPredictorBT(bt.Indicator):
         """
         # Store 'predictions' in self.lines
         for i in range(self.data.buflen()):
-            self.lines.gp_signal[i] = self.preds[i]
+            self.lines.bollinger_signal[i] = self.preds[i]
 
  
 #######################################
 # Strategy
 #######################################
-class GriffithsCrossStrategy(bt.Strategy):
-    params = dict_to_params(GRIFFITHS_DEFAULTS)
+class BollingerCrewAIStrategy(bt.Strategy):
+    params = dict_to_params(BOLLINGER_DEFAULTS)
 
     def __init__(self):
         # Add our indicator to the data
-        self.gp_ind = GriffithsPredictorBT(
+        self.bollinger_ind = BollingerIndicatorBT(
             self.data,
+            ticker=self.p.ticker,            
             length=self.p.length,
-            lower_bound=self.p.lower_bound,
-            upper_bound=self.p.upper_bound,
-            bars_fwd=self.p.bars_fwd,
-            peak_decay=self.p.peak_decay,
-            initial_peak=self.p.initial_peak,
-            scale_to_price=self.p.scale_to_price
+            std=self.p.std
         )
 
-        self.gp_signal = self.gp_ind.gp_signal
+        self.bollinger_signal = self.bollinger_ind.bollinger_signal
 
     def next(self):
         # Log the current date
@@ -118,13 +118,12 @@ class GriffithsCrossStrategy(bt.Strategy):
         allocation_used = cash * self.p.allocation
 
         # Current and previous bar's Griffiths Predictor
-        gp_val = self.gp_signal[0]
-        gp_prev = self.gp_signal[-1]
+        bb_val = self.bollinger_signal[0]
 
         # Check if we already have a position
         if not self.position:  # If not in a position
             # Buy if crossing above 0
-            if gp_val > 0 and gp_prev <= 0:
+            if bb_val == "BUY":
                 cash = self.broker.getcash()  # available cash
                 price = self.data.close[0]    # current asset price
                 # allocate X% of cash (self.p.allocation)
@@ -135,7 +134,7 @@ class GriffithsCrossStrategy(bt.Strategy):
 
         else:
             # Sell if crossing below 0
-            if gp_val < 0 and gp_prev >= 0:
+            if bb_val == "SELL":
                 size = self.position.size
                 price = self.data.close[0]
 
@@ -208,10 +207,10 @@ if __name__ == '__main__':
     cash = 10000
     commission=0.001
 
-    symbol = 'SPY'
     start = datetime(2020,1,1)
     end = datetime.today()
 
+    # symbol is global data because the bt.Indicator needs it
     data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end)
 
     # Convert pandas DataFrame into Backtrader data feed
@@ -219,6 +218,6 @@ if __name__ == '__main__':
 
 
     print("*********************************************")
-    print("************* Griffiths CROSS ***************")
+    print("************* Bollinger CrewAI **************")
     print("*********************************************")
-    run_backtest(strategy_class=GriffithsCrossStrategy, data_feed=data_feed, cash=cash, commission=commission )
+    run_backtest(strategy_class=BollingerCrewAIStrategy, data_feed=data_feed, cash=cash, commission=commission )
