@@ -47,7 +47,7 @@ class BollingerAnalysisAgent(BaseAgent):
         return Task(
             description=description,
             agent=self,
-            expected_output="""A python dict with the date as the key and BUY, SELL, or HOLD as the value. " \
+            expected_output="""A JSON dict with the date as the key and BUY, SELL, or HOLD as the value. " \
                                Include an entry for every date in pandas dataframe"""
         )
    

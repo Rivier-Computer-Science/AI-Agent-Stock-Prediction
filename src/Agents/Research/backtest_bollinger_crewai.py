@@ -3,7 +3,7 @@ import logging
 import backtrader as bt
 import numpy as np
 import datetime as dt
-import ast
+import json
 
 from src.Data_Retrieval.data_fetcher import DataFetcher  
 from src.Data_Retrieval.data_fetcher import DataFetcher
@@ -67,16 +67,28 @@ class BollingerIndicatorBT(bt.Indicator):
 
         # Get the predictions
         indicator_output, _ = bb.run()
-        indicator_dict = ast.literal_eval(indicator_output)
+        indicator_dict = json.loads(indicator_output)
         print("*******************************************************\n\n" )
-        #list(indicator_values.values())
-
         if isinstance(indicator_dict, dict):
-            print("Object is a dictionary.")
+            print("Object is a dictionary.\n", indicator_dict)
         else:
             print(f"Object is not a dictionary. It is of type: {type(indicator_dict).__name__}")
+            raise ValueError(f"Invalid parameter type of indicator_dict is not a dict.  It is of type: {type(indicator_dict).__name__}")
 
-        self.preds =  indicator_dict.values()       
+        # Dictionary will be:  {'output': {'2025-01-13': 'HOLD', '2025-01-14': 'HOLD', ...
+        # Extract the signals (BUY, HOLD, SELL)        
+        signals_dict = indicator_dict['output']
+        print("\n\n Signals Dict\n", signals_dict)
+
+        # Map signal to numeric values
+        signal_mapping = {"BUY": 1, "SELL": -1, "HOLD": 0}
+        numeric_signals_dict = {date: signal_mapping.get(signal, None) for date, signal in signals_dict.items()}
+        print("\n\n Numeric Signals Dict\n", numeric_signals_dict)
+
+        numeric_signals_list = list(numeric_signals_dict.values())
+        print("\n\nList of numeric signals:\n", numeric_signals_list)
+
+        self.preds =  numeric_signals_list
 
 
     # ----------------------------------------------------------------------
@@ -108,7 +120,58 @@ class BollingerCrewAIStrategy(bt.Strategy):
         )
 
         self.bollinger_signal = self.bollinger_ind.bollinger_signal
+        self.order = None
+        self.pending_entry = None
 
+    def bullish_cross(self, prev_bar, current_bar):
+        return prev_bar < 0 and current_bar >= 0
+
+    def bearish_cross(self, prev_bar, current_bar):
+        return prev_bar > 0 and current_bar <= 0
+
+    def log_position(self):
+        pos_size = self.position.size if self.position else 0
+        pos_type = 'NONE'
+        if pos_size > 0:
+            pos_type = 'LONG'
+        elif pos_size < 0:
+            pos_type = 'SHORT'
+        logging.info(f"{self.data.datetime.date(0)}: POSITION UPDATE: {pos_type} {pos_size} shares")
+
+    def notify_order(self, order):
+        date = self.data.datetime.date(0)
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                logging.info(f"{date}: BUY EXECUTED, Price: {order.executed.price:.2f}, Size: {order.executed.size}")
+            elif order.issell():
+                logging.info(f"{date}: SELL EXECUTED, Price: {order.executed.price:.2f}, Size: {order.executed.size}")
+
+            self.log_position()
+
+            # Enter pending position after close executes
+            if self.pending_entry:
+                cash = self.broker.getcash()
+                price = self.data.close[0]
+                size = int((cash / price) * 0.95)
+                if size > 0:
+                    if self.pending_entry == 'LONG':
+                        self.order = self.buy(size=size)
+                        logging.info(f"{date}: BUY {size} shares at {price:.2f}")
+                    elif self.pending_entry == 'SHORT':
+                        self.order = self.sell(size=size)
+                        logging.info(f"{date}: SELL {size} shares at {price:.2f}")
+                self.pending_entry = None
+
+            self.log_position()
+
+        elif order.status in [order.Margin, order.Rejected]:
+            logging.warning(f"{self.data.datetime.date(0)}: Order Failed - Margin/Rejected")
+            self.order = None
+            self.pending_entry = None
+
+        if order.status in [order.Completed, order.Canceled, order.Margin, order.Rejected]:
+            self.order = None
+    
     def next(self):
         # Log the current date
         current_date = self.datas[0].datetime.date(0)
@@ -123,7 +186,7 @@ class BollingerCrewAIStrategy(bt.Strategy):
         # Check if we already have a position
         if not self.position:  # If not in a position
             # Buy if crossing above 0
-            if bb_val == "BUY":
+            if bb_val == 1:
                 cash = self.broker.getcash()  # available cash
                 price = self.data.close[0]    # current asset price
                 # allocate X% of cash (self.p.allocation)
@@ -134,7 +197,7 @@ class BollingerCrewAIStrategy(bt.Strategy):
 
         else:
             # Sell if crossing below 0
-            if bb_val == "SELL":
+            if bb_val == -1:
                 size = self.position.size
                 price = self.data.close[0]
 
@@ -192,12 +255,47 @@ def run_backtest(strategy_class, data_feed, cash=10000, commission=0.001):
     logging.info(f"Returns Analysis {strategy_class.__name__}:")
     logging.info("\n%s", returns)  # Log the whole analysis dictionary
 
-    print(f"  Sharpe Ratio: {sharpe['sharperatio']:.2f}")
-    print(f"  Total Return: {returns['rtot']*100:.2f}%")
-    print(f"  Avg Daily Return: {returns['ravg']*100:.2f}%")
-    print(f"  Avg Annual Return: {((1+returns['ravg'])**252 - 1)*100:.2f}%")
-    print(f"  Max Drawdown: {drawdown.drawdown*100:.2f}%")
-    print(f"  Max Drawdown Duration: {max_drawdown_duration}")
+    # Sharpe Ratio
+    sharpe_ratio = sharpe.get('sharperatio')
+    if sharpe_ratio is not None:
+        print(f"  Sharpe Ratio: {sharpe_ratio:.2f}")
+    else:
+        print("  Sharpe Ratio: Not available")
+
+    # Total Return
+    total_return = returns.get('rtot')
+    if total_return is not None:
+        print(f"  Total Return: {total_return * 100:.2f}%")
+    else:
+        print("  Total Return: Not available")
+
+    # Average Daily Return
+    avg_daily_return = returns.get('ravg')
+    if avg_daily_return is not None:
+        print(f"  Avg Daily Return: {avg_daily_return * 100:.2f}%")
+    else:
+        print("  Avg Daily Return: Not available")
+
+    # Average Annual Return
+    if avg_daily_return is not None:
+        avg_annual_return = ((1 + avg_daily_return)**252 - 1) * 100
+        print(f"  Avg Annual Return: {avg_annual_return:.2f}%")
+    else:
+        print("  Avg Annual Return: Not available")
+
+    # Max Drawdown
+    max_dd = getattr(drawdown, 'drawdown', None)
+    if max_dd is not None:
+        print(f"  Max Drawdown: {max_dd * 100:.2f}%")
+    else:
+        print("  Max Drawdown: Not available")
+
+    # Max Drawdown Duration
+    if max_drawdown_duration is not None:
+        print(f"  Max Drawdown Duration: {max_drawdown_duration}")
+    else:
+        print("  Max Drawdown Duration: Not available")
+
 
     cerebro.plot()
 
@@ -207,8 +305,10 @@ if __name__ == '__main__':
     cash = 10000
     commission=0.001
 
-    start = datetime(2020,1,1)
-    end = datetime.today()
+    today = dt.datetime.today()
+    #start_date = dt.datetime(2014, 1, 1)
+    start = today - dt.timedelta(days=90)  # make sure inclusive
+    end = today        
 
     # symbol is global data because the bt.Indicator needs it
     data = DataFetcher().get_stock_data(symbol=symbol, start_date=start, end_date=end)

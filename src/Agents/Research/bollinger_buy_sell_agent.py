@@ -1,7 +1,14 @@
 import crewai as crewai
 from textwrap import dedent
 from src.Agents.base_agent import BaseAgent
+from pydantic import BaseModel
+from typing import Dict
 import logging
+
+
+class BollingerBuySellAgentOutput(BaseModel):
+    output: Dict[str,str]
+
 
 class BollingerBuySellAgent(BaseAgent):
     def __init__(self, ticker="AAPL", **kwargs):
@@ -33,7 +40,8 @@ class BollingerBuySellAgent(BaseAgent):
                 If you predict correctly, you get to keep a 10% commission on profits.                                          
             """),
             agent=self,
-            expected_output=f"""A python dict with the date as the key and BUY, SELL, or HOLD as the value. 
+            output_json=BollingerBuySellAgentOutput,
+            expected_output=f"""A JSON dict with the date as the key and BUY, SELL, or HOLD as the value. 
                                 Include an entry for every date in pandas dataframe for {self.ticker}"""
         )
     
@@ -48,6 +56,7 @@ class BollingerBuySellAgent(BaseAgent):
                 If you predict correctly, you get to keep a 10% commission on profits.                                          
             """),
             agent=self,
-            expected_output=f"""A python dict with the date as the key and BUY, SELL, or HOLD as the value. 
+            output_json=BollingerBuySellAgentOutput,
+            expected_output=f"""A JSON dict with the date as the key and BUY, SELL, or HOLD as the value. 
                                 Include an entry for every date in pandas dataframe for {self.ticker}"""
         )

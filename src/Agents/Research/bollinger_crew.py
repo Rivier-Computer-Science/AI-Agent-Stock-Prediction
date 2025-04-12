@@ -92,4 +92,4 @@ class BollingerCrew:
 
         task_output = buy_sell_decision.output  # Example of how to get task output
 
-        return task_output.raw, result
+        return task_output.json, result
