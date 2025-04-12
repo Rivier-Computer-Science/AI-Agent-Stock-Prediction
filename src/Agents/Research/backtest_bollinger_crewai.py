@@ -10,6 +10,9 @@ from src.Data_Retrieval.data_fetcher import DataFetcher
 from src.Agents.Research.bollinger_crew import BollingerCrew
 
 
+# Reset logging
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
 logging.basicConfig(level=logging.INFO, 
                      format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -22,7 +25,7 @@ symbol = 'NVDA'
 BOLLINGER_DEFAULTS = {
     'ticker': symbol,
     'length': 20,
-    'std': 2.0,
+    'std': 1.0,
     'allocation' : 1.0
 }
 
@@ -68,26 +71,19 @@ class BollingerIndicatorBT(bt.Indicator):
         # Get the predictions
         indicator_output, _ = bb.run()
         indicator_dict = json.loads(indicator_output)
-        print("*******************************************************\n\n" )
-        if isinstance(indicator_dict, dict):
-            print("Object is a dictionary.\n", indicator_dict)
-        else:
-            print(f"Object is not a dictionary. It is of type: {type(indicator_dict).__name__}")
+        if not isinstance(indicator_dict, dict):
             raise ValueError(f"Invalid parameter type of indicator_dict is not a dict.  It is of type: {type(indicator_dict).__name__}")
 
         # Dictionary will be:  {'output': {'2025-01-13': 'HOLD', '2025-01-14': 'HOLD', ...
         # Extract the signals (BUY, HOLD, SELL)        
         signals_dict = indicator_dict['output']
-        print("\n\n Signals Dict\n", signals_dict)
-
+ 
         # Map signal to numeric values
         signal_mapping = {"BUY": 1, "SELL": -1, "HOLD": 0}
         numeric_signals_dict = {date: signal_mapping.get(signal, None) for date, signal in signals_dict.items()}
-        print("\n\n Numeric Signals Dict\n", numeric_signals_dict)
 
         numeric_signals_list = list(numeric_signals_dict.values())
-        print("\n\nList of numeric signals:\n", numeric_signals_list)
-
+        print("\n\n Numeric Signals\n", numeric_signals_list)
         self.preds =  numeric_signals_list
 
 
@@ -118,16 +114,19 @@ class BollingerCrewAIStrategy(bt.Strategy):
             length=self.p.length,
             std=self.p.std
         )
+        # Print bollinger bands on chart. Not used for trading
+        self.bbands = bt.indicators.BollingerBands(self.datas[0], period=self.p.length, devfactor=self.p.std)
 
-        self.bollinger_signal = self.bollinger_ind.bollinger_signal
+        # Bollinger signals from CrewAI used for trading
+        self.bb_signal = self.bollinger_ind.bollinger_signal
         self.order = None
         self.pending_entry = None
 
     def bullish_cross(self, prev_bar, current_bar):
-        return prev_bar < 0 and current_bar >= 0
+        return prev_bar == 0 and current_bar == 1
 
     def bearish_cross(self, prev_bar, current_bar):
-        return prev_bar > 0 and current_bar <= 0
+        return prev_bar == 0 and current_bar == -1
 
     def log_position(self):
         pos_size = self.position.size if self.position else 0
@@ -173,36 +172,36 @@ class BollingerCrewAIStrategy(bt.Strategy):
             self.order = None
     
     def next(self):
-        # Log the current date
-        current_date = self.datas[0].datetime.date(0)
+        date = self.data.datetime.date(0)
+        if self.order:
+            return  # Wait for pending order to complete
 
-        # allocation
-        cash = self.broker.getcash()
-        allocation_used = cash * self.p.allocation
+        bb_val = self.bb_signal[0]
+        bb_prev = self.bb_signal[-1] if len(self.bb_signal) > 1 else 0
 
-        # Current and previous bar's Griffiths Predictor
-        bb_val = self.bollinger_signal[0]
+        if self.bullish_cross(bb_prev, bb_val):
+            if self.position:
+                if self.position.size < 0:  # Short position active
+                    logging.info(f"{date}: CLOSING SHORT POSITION BEFORE GOING LONG")
+                    self.order = self.close()
+                    self.pending_entry = 'LONG'
+            else:
+                size = int((self.broker.getcash() / self.data.close[0]) * 0.95)
+                if size > 0:
+                    self.order = self.buy(size=size)
+                    logging.info(f"{date}: BUY {size} shares at {self.data.close[0]:.2f}")
 
-        # Check if we already have a position
-        if not self.position:  # If not in a position
-            # Buy if crossing above 0
-            if bb_val == 1:
-                cash = self.broker.getcash()  # available cash
-                price = self.data.close[0]    # current asset price
-                # allocate X% of cash (self.p.allocation)
-                size = int((cash * self.p.allocation) // price)
-
-                self.buy(size=size)
-                logging.info(f"{current_date}: BUY {size} shares at {price:.2f}")
-
-        else:
-            # Sell if crossing below 0
-            if bb_val == -1:
-                size = self.position.size
-                price = self.data.close[0]
-
-                self.sell(size=size)
-                logging.info(f"{current_date}: SELL {size} shares at {price:.2f}")
+        elif self.bearish_cross(bb_prev, bb_val):
+            if self.position:
+                if self.position.size > 0:  # Long position active
+                    logging.info(f"{date}: CLOSING LONG POSITION BEFORE GOING SHORT")
+                    self.order = self.close()
+                    self.pending_entry = 'SHORT'
+            else:
+                size = int((self.broker.getcash() / self.data.close[0]) * 0.95)
+                if size > 0:
+                    self.order = self.sell(size=size)
+                    logging.info(f"{date}: SELL {size} shares at {self.data.close[0]:.2f}")
 
 
 
