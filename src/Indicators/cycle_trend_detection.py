@@ -25,6 +25,7 @@ class CycleDetector:
         self.stability_threshold = stability_threshold
         self.mu = 1 / self.length
         self.df = None  # To store the full dataframe
+        
 
     def fetch_data(self):
         # Print debug information
@@ -93,17 +94,30 @@ class CycleDetector:
     def detect_cycles(self, close_prices):
         hp = self.highpass_filter(close_prices, self.upper_bound)
         lp = self.super_smoother(hp, self.lower_bound)
+        
         dominant_cycles = []
+        
         for i in range(len(lp) - self.length):
             segment = lp[i : i + self.length]
             max_power, dominant_cycle = 0, 0
+            power_dict = {}  # Store power values for each period
+
             for period in range(self.lower_bound, self.upper_bound + 1):
                 real_part = sum(segment[j] * math.cos(2 * math.pi * j / period) for j in range(self.length))
                 imag_part = sum(segment[j] * math.sin(2 * math.pi * j / period) for j in range(self.length))
-                power = 0.1 / ((1 - real_part) ** 2 + imag_part ** 2) if (1 - real_part) ** 2 + imag_part ** 2 != 0 else 0
-                if power > max_power:
-                    max_power, dominant_cycle = power, period
+                
+                denominator = ((1 - real_part) ** 2 + imag_part ** 2)
+                power = 0 if denominator == 0 else 1 / (denominator + 1e-6)  # Add small epsilon to avoid division by zero
+                
+                power_dict[period] = power
+            
+            # Apply a smoothing function to stabilize cycle detection
+            smoothed_power_dict = {k: sum(power_dict.get(k + j, 0) for j in [-1, 0, 1]) / 3 for k in power_dict}
+
+            # Choose the cycle with the highest smoothed power
+            dominant_cycle = max(smoothed_power_dict, key=smoothed_power_dict.get)
             dominant_cycles.append(dominant_cycle)
+        
         return dominant_cycles
     
     def classify_trend(self, dominant_cycles):
