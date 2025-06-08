@@ -1,5 +1,4 @@
-
- import os
+import os
 os.environ['MPLBACKEND'] = 'Agg'
 
 import matplotlib
