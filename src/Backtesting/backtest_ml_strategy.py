@@ -23,29 +23,51 @@ import warnings
 import uuid
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from src.Data_Retrieval.data_fetcher import DataFetcher
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('trading_system.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 class DataPreprocessor:
     def preprocess(self, df):
-        df = df.copy()
-        df.fillna(method='ffill', inplace=True)
-        df['Returns'] = df['Close'].pct_change()
-        df['RSI'] = self.calculate_rsi(df['Close'], 14)
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['Volatility'] = df['Returns'].rolling(window=20).std()
-        df = (df - df.mean(numeric_only=True)) / df.std(numeric_only=True)
-        df.fillna(0, inplace=True)
-        return df
+        try:
+            df = df.copy()
+            df.fillna(method='ffill', inplace=True)
+            df['Returns'] = df['Close'].pct_change()
+            df['RSI'] = self.calculate_rsi(df['Close'], 14)
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            df['Volatility'] = df['Returns'].rolling(window=20).std()
+            df = (df - df.mean(numeric_only=True)) / df.std(numeric_only=True)
+            df.fillna(0, inplace=True)
+            logger.debug(f"Preprocessed data shape: {df.shape}")
+            return df
+        except Exception as e:
+            logger.error(f"Data preprocessing failed: {str(e)}", exc_info=True)
+            raise ValueError(f"Data preprocessing failed: {str(e)}")
+    
     def calculate_rsi(self, prices, period):
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)
-        return 100 - (100 / (1 + rs))
+        try:
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)
+            rsi = 100 - (100 / (1 + rs))
+            logger.debug(f"RSI calculated for period {period}")
+            return rsi
+        except Exception as e:
+            logger.error(f"RSI calculation failed: {str(e)}", exc_info=True)
+            raise ValueError(f"RSI calculation failed: {str(e)}")
+
 class DQNStrategy(bt.Strategy):
     params = (
         ('period', 14),
@@ -58,14 +80,16 @@ class DQNStrategy(bt.Strategy):
         ('epsilon_decay', 0.995),
         ('learning_rate', 0.001),
     )
+    
     def __init__(self):
         self.trade_log = []
-        self.model = self.build_dqn_model()
+        self.model = None
         self.memory = deque(maxlen=2000)
         self.preprocessor = DataPreprocessor()
         self.data_processed = {}
         self.actions_history = {data._name: [] for data in self.datas}
         try:
+            self.model = self.build_dqn_model()
             for data in self.datas:
                 df = pd.DataFrame({
                     'Close': [data.close[i] for i in range(-self.p.period, 0)],
@@ -73,36 +97,58 @@ class DQNStrategy(bt.Strategy):
                     'Low': [data.low[i] for i in range(-self.p.period, 0)],
                 })
                 self.data_processed[data._name] = self.preprocessor.preprocess(df)
+            logger.info(f"Initialized DQNStrategy for {len(self.datas)} assets")
         except Exception as e:
-            logging.error(f"Data preprocessing error: {str(e)}")
-            st.error(f"Error preprocessing data: {str(e)}. Please check data integrity.")
+            logger.error(f"DQNStrategy initialization failed: {str(e)}", exc_info=True)
+            st.error(f"Error initializing DQN strategy: {str(e)}. Please check data integrity.")
+            raise
+    
     def build_dqn_model(self):
-        model = Sequential([
-            Dense(32, input_dim=self.p.state_size, activation='relu'),
-            Dense(32, activation='relu'),
-            Dense(self.p.action_size, activation='linear')
-        ])
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.p.learning_rate))
-        return model
-    def get_state(self, data):
-        df = self.data_processed[data._name]
-        features = df[['Close', 'RSI', 'MA20', 'Volatility']].iloc[-self.p.state_size//4:].values.flatten()
-        expected_size = self.p.state_size
-        if len(features) > expected_size:
-            features = features[:expected_size]
-        elif len(features) < expected_size:
-            features = np.pad(features, (0, expected_size - len(features)), mode='constant')
-        return features
-    def act(self, state):
-        if random.random() <= self.p.epsilon:
-            return random.randrange(self.p.action_size)
         try:
-            return np.argmax(self.model.predict(state.reshape(1, -1), verbose=0)[0])
+            model = Sequential([
+                Dense(32, input_dim=self.p.state_size, activation='relu'),
+                Dense(32, activation='relu'),
+                Dense(self.p.action_size, activation='linear')
+            ])
+            model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.p.learning_rate))
+            logger.info("DQN model built successfully")
+            return model
         except Exception as e:
-            logging.error(f"Model prediction error: {str(e)}")
+            logger.error(f"DQN model building failed: {str(e)}", exc_info=True)
+            raise RuntimeError(f"DQN model building failed: {str(e)}")
+    
+    def get_state(self, data):
+        try:
+            df = self.data_processed[data._name]
+            features = df[['Close', 'RSI', 'MA20', 'Volatility']].iloc[-self.p.state_size//4:].values.flatten()
+            expected_size = self.p.state_size
+            if len(features) > expected_size:
+                features = features[:expected_size]
+            elif len(features) < expected_size:
+                features = np.pad(features, (0, expected_size - len(features)), mode='constant')
+            logger.debug(f"State extracted for {data._name}, shape: {features.shape}")
+            return features
+        except Exception as e:
+            logger.error(f"State extraction failed for {data._name}: {str(e)}", exc_info=True)
+            raise ValueError(f"State extraction failed: {str(e)}")
+    
+    def act(self, state):
+        try:
+            if random.random() <= self.p.epsilon:
+                action = random.randrange(self.p.action_size)
+                logger.debug(f"Random action selected: {action}")
+                return action
+            action = np.argmax(self.model.predict(state.reshape(1, -1), verbose=0)[0])
+            logger.debug(f"Model predicted action: {action}")
+            return action
+        except Exception as e:
+            logger.error(f"Action prediction failed: {str(e)}", exc_info=True)
+            st.warning(f"Model prediction error: {str(e)}. Falling back to random action.")
             return random.randrange(self.p.action_size)
+    
     def replay(self):
         if len(self.memory) < 32:
+            logger.debug("Insufficient memory for replay")
             return
         try:
             batch = random.sample(self.memory, 32)
@@ -113,17 +159,20 @@ class DQNStrategy(bt.Strategy):
             for i, (state, action, reward, next_state, done) in enumerate(batch):
                 target = reward if done else reward + self.p.gamma * np.max(next_qs[i])
                 targets[i][action] = target
-            self.model.fit(states, targets, epochs=1, verbose=0)
+            history = self.model.fit(states, targets, epochs=1, verbose=0)
             if self.p.epsilon > self.p.epsilon_min:
                 self.p.epsilon *= self.p.epsilon_decay
+            logger.info(f"Replay completed, loss: {history.history['loss'][0]:.4f}, epsilon: {self.p.epsilon:.4f}")
         except Exception as e:
-            logging.error(f"Replay error: {str(e)}")
-            st.warning("Issue during model training. Continuing with current model.")
+            logger.error(f"Replay training failed: {str(e)}", exc_info=True)
+            st.warning(f"Training error: {str(e)}. Continuing with current model.")
+    
     def extract_rules(self, data_name):
         try:
             X = np.array([self.get_state(data) for data in self.datas if data._name == data_name])
             y = np.array(self.actions_history[data_name][-len(X):]) if self.actions_history[data_name] else np.zeros(len(X))
             if len(X) == 0 or len(y) == 0:
+                logger.warning(f"No data for rule extraction for {data_name}")
                 return "No rules extracted: insufficient data."
             tree = DecisionTreeClassifier(max_depth=3)
             tree.fit(X, y)
@@ -131,10 +180,13 @@ class DQNStrategy(bt.Strategy):
             from sklearn.tree import export_text
             tree_text = export_text(tree, feature_names=['Feature'+str(i) for i in range(X.shape[1])])
             print(tree_text, file=output)
-            return output.getvalue()
+            rules = output.getvalue()
+            logger.info(f"Rules extracted for {data_name}")
+            return rules
         except Exception as e:
-            logging.error(f"Rule extraction error: {str(e)}")
+            logger.error(f"Rule extraction failed for {data_name}: {str(e)}", exc_info=True)
             return f"Error extracting rules: {str(e)}"
+    
     def next(self):
         for data in self.datas:
             try:
@@ -156,7 +208,7 @@ class DQNStrategy(bt.Strategy):
                             self.buy(data=data, size=size)
                             msg = f"{current_date}: BUY {size} shares of {data._name} at {price:.2f} (DQN)"
                             self.trade_log.append(msg)
-                            logging.info(msg)
+                            logger.info(msg)
                 else:
                     if action == 2:
                         size = self.getposition(data).size
@@ -164,10 +216,11 @@ class DQNStrategy(bt.Strategy):
                         self.sell(data=data, size=size)
                         msg = f"{current_date}: SELL {size} shares of {data._name} at {price:.2f} (DQN)"
                         self.trade_log.append(msg)
-                        logging.info(msg)
+                        logger.info(msg)
             except Exception as e:
-                logging.error(f"Strategy execution error: {str(e)}")
-                st.warning(f"Error executing strategy for {data._name}: {str(e)}")
+                logger.error(f"Strategy execution failed for {data._name}: {str(e)}", exc_info=True)
+                st.warning(f"Error executing DQN strategy for {data._name}: {str(e)}. Skipping this step.")
+
 class GAStrategy(bt.Strategy):
     params = (
         ('period', 14),
@@ -175,6 +228,7 @@ class GAStrategy(bt.Strategy):
         ('population_size', 50),
         ('generations', 20),
     )
+    
     def __init__(self):
         self.trade_log = []
         self.preprocessor = DataPreprocessor()
@@ -187,26 +241,29 @@ class GAStrategy(bt.Strategy):
                     'Low': [data.low[i] for i in range(-self.p.period, 0)],
                 })
                 self.data_processed[data._name] = self.preprocessor.preprocess(df)
+            creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+            creator.create("Individual", list, fitness=creator.FitnessMax)
+            self.toolbox = base.Toolbox()
+            self.toolbox.register("attr_float", random.uniform, 0, 1)
+            self.toolbox.register("individual", tools.initRepeat, creator.Individual, self.toolbox.attr_float, n=4)
+            self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+            self.toolbox.register("evaluate", self.evaluate)
+            self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
+            self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)
+            self.toolbox.register("select", tools.selTournament, tournsize=3)
+            self.population = self.toolbox.population(n=self.p.population_size)
+            self.best_individuals = {data._name: None for data in self.datas}
+            self.fitness_history = {data._name: [] for data in self.datas}
+            self.optimize()
+            logger.info(f"Initialized GAStrategy for {len(self.datas)} assets")
         except Exception as e:
-            logging.error(f"Data preprocessing error: {str(e)}")
-            st.error(f"Error preprocessing data: {str(e)}. Please check data integrity.")
-        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-        creator.create("Individual", list, fitness=creator.FitnessMax)
-        self.toolbox = base.Toolbox()
-        self.toolbox.register("attr_float", random.uniform, 0, 1)
-        self.toolbox.register("individual", tools.initRepeat, creator.Individual, self.toolbox.attr_float, n=4)
-        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
-        self.toolbox.register("evaluate", self.evaluate)
-        self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
-        self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)
-        self.toolbox.register("select", tools.selTournament, tournsize=3)
-        self.population = self.toolbox.population(n=self.p.population_size)
-        self.best_individuals = {data._name: None for data in self.datas}
-        self.fitness_history = {data._name: [] for data in self.datas}
-        self.optimize()
+            logger.error(f"GAStrategy initialization failed: {str(e)}", exc_info=True)
+            st.error(f"Error initializing GA strategy: {str(e)}. Please check data integrity.")
+            raise
+    
     def evaluate(self, individual, data_name):
-        rsi_buy, rsi_sell, ma_buy, vol_threshold = individual
         try:
+            rsi_buy, rsi_sell, ma_buy, vol_threshold = individual
             returns = []
             data_processed = self.data_processed[data_name]
             for i in range(1, len(data_processed)):
@@ -218,10 +275,13 @@ class GAStrategy(bt.Strategy):
                     returns.append(price - data_processed['Close'].iloc[i-1])
                 elif rsi > rsi_sell:
                     returns.append(0)
-            return sum(returns) if returns else 0,
+            fitness = sum(returns) if returns else 0
+            logger.debug(f"Evaluated individual for {data_name}, fitness: {fitness:.4f}")
+            return fitness,
         except Exception as e:
-            logging.error(f"Evaluation error: {str(e)}")
+            logger.error(f"Evaluation failed for {data_name}: {str(e)}", exc_info=True)
             return 0,
+    
     def optimize(self):
         try:
             for data in self.datas:
@@ -231,14 +291,19 @@ class GAStrategy(bt.Strategy):
                     for ind, fit in zip(offspring, fits):
                         ind.fitness.values = fit
                     self.population = self.toolbox.select(offspring, len(self.population))
-                    self.fitness_history[data._name].append(max([ind.fitness.values[0] for ind in self.population]))
+                    max_fitness = max([ind.fitness.values[0] for ind in self.population])
+                    self.fitness_history[data._name].append(max_fitness)
+                    logger.info(f"Generation {gen+1}/{self.p.generations} for {data._name}, best fitness: {max_fitness:.4f}")
                 self.best_individuals[data._name] = tools.selBest(self.population, 1)[0]
+            logger.info("GA optimization completed")
         except Exception as e:
-            logging.error(f"Optimization error: {str(e)}")
-            st.warning(f"Optimization failed for {data._name}: {str(e)}")
+            logger.error(f"Optimization failed: {str(e)}", exc_info=True)
+            st.warning(f"Optimization failed: {str(e)}. Using default parameters.")
+    
     def extract_rules(self, data_name):
         try:
             if self.best_individuals[data_name] is None:
+                logger.warning(f"No best individual for {data_name}")
                 return "No rules extracted: optimization failed."
             rsi_buy, rsi_sell, ma_buy, vol_threshold = self.best_individuals[data_name]
             stability = np.std(self.fitness_history[data_name][-5:]) if len(self.fitness_history[data_name]) >= 5 else 0
@@ -247,10 +312,12 @@ Buy Rule: RSI < {rsi_buy:.2f} AND MA20 > 0 AND Volatility < {vol_threshold:.2f}
 Sell Rule: RSI > {rsi_sell:.2f}
 Stability Metric (Std of last 5 gen fitness): {stability:.4f}
             """
+            logger.info(f"Rules extracted for {data_name}")
             return rules
         except Exception as e:
-            logging.error(f"Rule extraction error: {str(e)}")
+            logger.error(f"Rule extraction failed for {data_name}: {str(e)}", exc_info=True)
             return f"Error extracting rules: {str(e)}"
+    
     def next(self):
         for data in self.datas:
             try:
@@ -269,7 +336,7 @@ Stability Metric (Std of last 5 gen fitness): {stability:.4f}
                             self.buy(data=data, size=size)
                             msg = f"{current_date}: BUY {size} shares of {data._name} at {price:.2f} (GA)"
                             self.trade_log.append(msg)
-                            logging.info(msg)
+                            logger.info(msg)
                 else:
                     if rsi > rsi_sell:
                         size = self.getposition(data).size
@@ -277,10 +344,11 @@ Stability Metric (Std of last 5 gen fitness): {stability:.4f}
                         self.sell(data=data, size=size)
                         msg = f"{current_date}: SELL {size} shares of {data._name} at {price:.2f} (GA)"
                         self.trade_log.append(msg)
-                        logging.info(msg)
+                        logger.info(msg)
             except Exception as e:
-                logging.error(f"Strategy execution error: {str(e)}")
-                st.warning(f"Error executing strategy for {data._name}: {str(e)}")
+                logger.error(f"Strategy execution failed for {data._name}: {str(e)}", exc_info=True)
+                st.warning(f"Error executing GA strategy for {data._name}: {str(e)}. Skipping this step.")
+
 def generate_synthetic_data(start_date, end_date, initial_price=100, ticker="SYNTH"):
     try:
         dates = pd.date_range(start=start_date, end=end_date, freq='D')
@@ -295,11 +363,13 @@ def generate_synthetic_data(start_date, end_date, initial_price=100, ticker="SYN
             'Volume': [1000000 * np.random.uniform(0.5, 1.5) for _ in prices]
         }, index=dates)
         df.name = ticker
+        logger.info(f"Synthetic data generated for {ticker}, shape: {df.shape}")
         return df
     except Exception as e:
-        logging.error(f"Synthetic data generation error: {str(e)}")
-        st.error(f"Error generating synthetic data: {str(e)}")
+        logger.error(f"Synthetic data generation failed: {str(e)}", exc_info=True)
+        st.error(f"Error generating synthetic data: {str(e)}. Please try different parameters.")
         return pd.DataFrame()
+
 def export_strategy(strategy_class, perf_summary, trade_log, rules, ticker_list, filename_prefix="strategy"):
     try:
         unique_id = str(uuid.uuid4())[:8]
@@ -312,25 +382,48 @@ from tensorflow.keras.layers import Dense
 from collections import deque
 import random
 from deap import base, creator, tools, algorithms
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('trading_system.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 class DataPreprocessor:
     def preprocess(self, df):
-        df = df.copy()
-        df.fillna(method='ffill', inplace=True)
-        df['Returns'] = df['Close'].pct_change()
-        df['RSI'] = self.calculate_rsi(df['Close'], 14)
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['Volatility'] = df['Returns'].rolling(window=20).std()
-        df = (df - df.mean(numeric_only=True)) / df.std(numeric_only=True)
-        df.fillna(0, inplace=True)
-        return df
+        try:
+            df = df.copy()
+            df.fillna(method='ffill', inplace=True)
+            df['Returns'] = df['Close'].pct_change()
+            df['RSI'] = self.calculate_rsi(df['Close'], 14)
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            df['Volatility'] = df['Returns'].rolling(window=20).std()
+            df = (df - df.mean(numeric_only=True)) / df.std(numeric_only=True)
+            df.fillna(0, inplace=True)
+            logger.debug(f"Preprocessed data shape: {{df.shape}}")
+            return df
+        except Exception as e:
+            logger.error(f"Data preprocessing failed: {{str(e)}}", exc_info=True)
+            raise ValueError(f"Data preprocessing failed: {{str(e)}}")
+    
     def calculate_rsi(self, prices, period):
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)
-        return 100 - (100 / (1 + rs))
+        try:
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)
+            rsi = 100 - (100 / (1 + rs))
+            logger.debug(f"RSI calculated for period {{period}}")
+            return rsi
+        except Exception as e:
+            logger.error(f"RSI calculation failed: {{str(e)}}", exc_info=True)
+            raise ValueError(f"RSI calculation failed: {{str(e)}}")
 
 class {strategy_class.__name__}(bt.Strategy):
     params = {strategy_class.params}
@@ -342,42 +435,49 @@ class {strategy_class.__name__}(bt.Strategy):
             'High': [data.high[i] for i in range(-self.p.period, 0)],
             'Low': [data.low[i] for i in range(-self.p.period, 0)],
         }})) for data in self.datas}}
-        {'self.model = self.build_dqn_model()' if strategy_class.__name__ == 'DQNStrategy' else ''}
-        {'self.memory = deque(maxlen=2000)' if strategy_class.__name__ == 'DQNStrategy' else ''}
-        {'self.actions_history = {data._name: [] for data in self.datas}' if strategy_class.__name__ == 'DQNStrategy' else ''}
-        {'creator.create("FitnessMax", base.Fitness, weights=(1.0,)); creator.create("Individual", list, fitness=creator.FitnessMax); self.toolbox = base.Toolbox(); self.toolbox.register("attr_float", random.uniform, 0, 1); self.toolbox.register("individual", tools.initRepeat, creator.Individual, self.toolbox.attr_float, n=4); self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual); self.toolbox.register("evaluate", self.evaluate); self.toolbox.register("mate", tools.cxBlend, alpha=0.5); self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2); self.toolbox.register("select", tools.selTournament, tournsize=3); self.population = self.toolbox.population(n=self.p.population_size); self.best_individuals = {data._name: None for data in self.datas}; self.fitness_history = {data._name: [] for data in self.datas}; self.optimize()' if strategy_class.__name__ == 'GAStrategy' else ''}
-    {'def build_dqn_model(self): model = Sequential([Dense(32, input_dim=self.p.state_size, activation="relu"), Dense(32, activation="relu"), Dense(self.p.action_size, activation="linear")]); model.compile(loss="mse", optimizer=tf.keras.optimizers.Adam(learning_rate=self.p.learning_rate)); return model' if strategy_class.__name__ == 'DQNStrategy' else ''}
-    {'def get_state(self, data): df = self.data_processed[data._name]; features = df[["Close", "RSI", "MA20", "Volatility"]].iloc[-self.p.state_size//4:].values.flatten(); expected_size = self.p.state_size; if len(features) > expected_size: features = features[:expected_size]; elif len(features) < expected_size: features = np.pad(features, (0, expected_size - len(features)), mode="constant"); return features' if strategy_class.__name__ == 'DQNStrategy' else ''}
-    {'def act(self, state): if random.random() <= self.p.epsilon: return random.randrange(self.p.action_size); return np.argmax(self.model.predict(state.reshape(1, -1), verbose=0)[0])' if strategy_class.__name__ == 'DQNStrategy' else ''}
-    {'def replay(self): if len(self.memory) < 32: return; batch = random.sample(self.memory, 32); states = np.array([t[0] for t in batch]); next_states = np.array([t[3] for t in batch]); targets = self.model.predict(states, verbose=0); next_qs = self.model.predict(next_states, verbose=0); for i, (state, action, reward, next_state, done) in enumerate(batch): target = reward if done else reward + self.p.gamma * np.max(next_qs[i]); targets[i][action] = target; self.model.fit(states, targets, epochs=1, verbose=0); if self.p.epsilon > self.p.epsilon_min: self.p.epsilon *= self.p.epsilon_decay' if strategy_class.__name__ == 'DQNStrategy' else ''}
-    {'def evaluate(self, individual, data_name): rsi_buy, rsi_sell, ma_buy, vol_threshold = individual; returns = []; data_processed = self.data_processed[data_name]; for i in range(1, len(data_processed)): rsi = data_processed["RSI"].iloc[i]; ma = data_processed["MA20"].iloc[i]; vol = data_processed["Volatility"].iloc[i]; price = data_processed["Close"].iloc[i]; if rsi < rsi_buy and ma > 0 and vol < vol_threshold: returns.append(price - data_processed["Close"].iloc[i-1]); elif rsi > rsi_sell: returns.append(0); return sum(returns) if returns else 0,' if strategy_class.__name__ == 'GAStrategy' else ''}
-    {'def optimize(self): for data in self.datas: for gen in range(self.p.generations): offspring = algorithms.varAnd(self.population, self.toolbox, cxpb=0.7, mutpb=0.3); fits = list(map(lambda ind: self.toolbox.evaluate(ind, data._name), offspring)); for ind, fit in zip(offspring, fits): ind.fitness.values = fit; self.population = self.toolbox.select(offspring, len(self.population)); self.fitness_history[data._name].append(max([ind.fitness.values[0] for ind in self.population])); self.best_individuals[data._name] = tools.selBest(self.population, 1)[0]' if strategy_class.__name__ == 'GAStrategy' else ''}
+        {'self.model = self.build_dqn_model(); self.memory = deque(maxlen=2000); self.actions_history = {data._name: [] for data in self.datas}' if strategy_class.__name__ == 'DQNStrategy' else 'creator.create("FitnessMax", base.Fitness, weights=(1.0,)); creator.create("Individual", list, fitness=creator.FitnessMax); self.toolbox = base.Toolbox(); self.toolbox.register("attr_float", random.uniform, 0, 1); self.toolbox.register("individual", tools.initRepeat, creator.Individual, self.toolbox.attr_float, n=4); self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual); self.toolbox.register("evaluate", self.evaluate); self.toolbox.register("mate", tools.cxBlend, alpha=0.5); self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2); self.toolbox.register("select", tools.selTournament, tournsize=3); self.population = self.toolbox.population(n=self.p.population_size); self.best_individuals = {data._name: None for data in self.datas}; self.fitness_history = {data._name: [] for data in self.datas}; self.optimize()'}
+        try:
+            logger.info(f"Initialized {{self.__class__.__name__}} for {{len(self.datas)}} assets")
+        except Exception as e:
+            logger.error(f"Strategy initialization failed: {{str(e)}}", exc_info=True)
+            raise
+    {'def build_dqn_model(self): try: model = Sequential([Dense(32, input_dim=self.p.state_size, activation="relu"), Dense(32, activation="relu"), Dense(self.p.action_size, activation="linear")]); model.compile(loss="mse", optimizer=tf.keras.optimizers.Adam(learning_rate=self.p.learning_rate)); logger.info("DQN model built successfully"); return model; except Exception as e: logger.error(f"DQN model building failed: {{str(e)}}", exc_info=True); raise RuntimeError(f"DQN model building failed: {{str(e)}}")' if strategy_class.__name__ == 'DQNStrategy' else ''}
+    {'def get_state(self, data): try: df = self.data_processed[data._name]; features = df[["Close", "RSI", "MA20", "Volatility"]].iloc[-self.p.state_size//4:].values.flatten(); expected_size = self.p.state_size; if len(features) > expected_size: features = features[:expected_size]; elif len(features) < expected_size: features = np.pad(features, (0, expected_size - len(features)), mode="constant"); logger.debug(f"State extracted for {{data._name}}, shape: {{features.shape}}"); return features; except Exception as e: logger.error(f"State extraction failed for {{data._name}}: {{str(e)}}", exc_info=True); raise ValueError(f"State extraction failed: {{str(e)}}")' if strategy_class.__name__ == 'DQNStrategy' else ''}
+    {'def act(self, state): try: if random.random() <= self.p.epsilon: action = random.randrange(self.p.action_size); logger.debug(f"Random action selected: {{action}}"); return action; action = np.argmax(self.model.predict(state.reshape(1, -1), verbose=0)[0]); logger.debug(f"Model predicted action: {{action}}"); return action; except Exception as e: logger.error(f"Action prediction failed: {{str(e)}}", exc_info=True); st.warning(f"Model prediction error: {{str(e)}}. Falling back to random action."); return random.randrange(self.p.action_size)' if strategy_class.__name__ == 'DQNStrategy' else ''}
+    {'def replay(self): if len(self.memory) < 32: logger.debug("Insufficient memory for replay"); return; try: batch = random.sample(self.memory, 32); states = np.array([t[0] for t in batch]); next_states = np.array([t[3] for t in batch]); targets = self.model.predict(states, verbose=0); next_qs = self.model.predict(next_states, verbose=0); for i, (state, action, reward, next_state, done) in enumerate(batch): target = reward if done else reward + self.p.gamma * np.max(next_qs[i]); targets[i][action] = target; history = self.model.fit(states, targets, epochs=1, verbose=0); if self.p.epsilon > self.p.epsilon_min: self.p.epsilon *= self.p.epsilon_decay; logger.info(f"Replay completed, loss: {{history.history['loss'][0]:.4f}}, epsilon: {{self.p.epsilon:.4f}}"); except Exception as e: logger.error(f"Replay training failed: {{str(e)}}", exc_info=True); st.warning(f"Training error: {{str(e)}}. Continuing with current model.")' if strategy_class.__name__ == 'DQNStrategy' else ''}
+    {'def evaluate(self, individual, data_name): try: rsi_buy, rsi_sell, ma_buy, vol_threshold = individual; returns = []; data_processed = self.data_processed[data_name]; for i in range(1, len(data_processed)): rsi = data_processed["RSI"].iloc[i]; ma = data_processed["MA20"].iloc[i]; vol = data_processed["Volatility"].iloc[i]; price = data_processed["Close"].iloc[i]; if rsi < rsi_buy and ma > 0 and vol < vol_threshold: returns.append(price - data_processed["Close"].iloc[i-1]); elif rsi > rsi_sell: returns.append(0); fitness = sum(returns) if returns else 0; logger.debug(f"Evaluated individual for {{data_name}}, fitness: {{fitness:.4f}}"); return fitness,; except Exception as e: logger.error(f"Evaluation failed for {{data_name}}: {{str(e)}}", exc_info=True); return 0,' if strategy_class.__name__ == 'GAStrategy' else ''}
+    {'def optimize(self): try: for data in self.datas: for gen in range(self.p.generations): offspring = algorithms.varAnd(self.population, self.toolbox, cxpb=0.7, mutpb=0.3); fits = list(map(lambda ind: self.toolbox.evaluate(ind, data._name), offspring)); for ind, fit in zip(offspring, fits): ind.fitness.values = fit; self.population = self.toolbox.select(offspring, len(self.population)); max_fitness = max([ind.fitness.values[0] for ind in self.population]); self.fitness_history[data._name].append(max_fitness); logger.info(f"Generation {{gen+1}}/{{self.p.generations}} for {{data._name}}, best fitness: {{max_fitness:.4f}}"); self.best_individuals[data._name] = tools.selBest(self.population, 1)[0]; logger.info("GA optimization completed"); except Exception as e: logger.error(f"Optimization failed: {{str(e)}}", exc_info=True); st.warning(f"Optimization failed: {{str(e)}}. Using default parameters.")' if strategy_class.__name__ == 'GAStrategy' else ''}
     def next(self):
         for data in self.datas:
-            current_date = data.datetime.date(0)
-            df = self.data_processed[data._name]
-            rsi = df['RSI'].iloc[-1]
-            {'self.actions_history[data._name].append(self.act(self.get_state(data)))' if strategy_class.__name__ == 'DQNStrategy' else ''}
-            {'ma = df["MA20"].iloc[-1]; vol = df["Volatility"].iloc[-1]; rsi_buy, rsi_sell, ma_buy, vol_threshold = self.best_individuals[data._name]' if strategy_class.__name__ == 'GAStrategy' else ''}
-            {'action = self.act(self.get_state(data)); reward = data.close[0] - data.close[-1] if action == 1 else 0; done = len(data) - 1 == data.buflen(); next_state = self.get_state(data); self.memory.append((self.get_state(data), action, reward, next_state, done)); self.replay()' if strategy_class.__name__ == 'DQNStrategy' else ''}
-            if not self.getposition(data):
-                {'if action == 1:' if strategy_class.__name__ == 'DQNStrategy' else 'if rsi < rsi_buy and ma > 0 and vol < vol_threshold:'}
-                    cash = self.broker.getcash()
-                    price = data.close[0]
-                    size = int((cash * self.p.allocation) // price)
-                    if size > 0:
-                        self.buy(data=data, size=size)
-                        msg = f"{{current_date}}: BUY {{size}} shares of {{data._name}} at {{price:.2f}} ({strategy_class.__name__[:2]})"
+            try:
+                current_date = data.datetime.date(0)
+                df = self.data_processed[data._name]
+                rsi = df['RSI'].iloc[-1]
+                {'self.actions_history[data._name].append(self.act(self.get_state(data)))' if strategy_class.__name__ == 'DQNStrategy' else 'ma = df["MA20"].iloc[-1]; vol = df["Volatility"].iloc[-1]; rsi_buy, rsi_sell, ma_buy, vol_threshold = self.best_individuals[data._name]'}
+                {'action = self.act(self.get_state(data)); reward = data.close[0] - data.close[-1] if action == 1 else 0; done = len(data) - 1 == data.buflen(); next_state = self.get_state(data); self.memory.append((self.get_state(data), action, reward, next_state, done)); self.replay()' if strategy_class.__name__ == 'DQNStrategy' else ''}
+                if not self.getposition(data):
+                    {'if action == 1:' if strategy_class.__name__ == 'DQNStrategy' else 'if rsi < rsi_buy and ma > 0 and vol < vol_threshold:'}
+                        cash = self.broker.getcash()
+                        price = data.close[0]
+                        size = int((cash * self.p.allocation) // price)
+                        if size > 0:
+                            self.buy(data=data, size=size)
+                            msg = f"{{current_date}}: BUY {{size}} shares of {{data._name}} at {{price:.2f}} ({strategy_class.__name__[:2]})"
+                            self.trade_log.append(msg)
+                            logger.info(msg)
+                else:
+                    {'if action == 2:' if strategy_class.__name__ == 'DQNStrategy' else 'if rsi > rsi_sell:'}
+                        size = self.getposition(data).size
+                        price = data.close[0]
+                        self.sell(data=data, size=size)
+                        msg = f"{{current_date}}: SELL {{size}} shares of {{data._name}} at {{price:.2f}} ({strategy_class.__name__[:2]})"
                         self.trade_log.append(msg)
-            else:
-                {'if action == 2:' if strategy_class.__name__ == 'DQNStrategy' else 'if rsi > rsi_sell:'}
-                    size = self.getposition(data).size
-                    price = data.close[0]
-                    self.sell(data=data, size=size)
-                    msg = f"{{current_date}}: SELL {{size}} shares of {{data._name}} at {{price:.2f}} ({strategy_class.__name__[:2]})"
-                    self.trade_log.append(msg)
-    {'def extract_rules(self, data_name): X = np.array([self.get_state(data) for data in self.datas if data._name == data_name]); y = np.array(self.actions_history[data_name][-len(X):]) if self.actions_history[data_name] else np.zeros(len(X)); if len(X) == 0 or len(y) == 0: return "No rules extracted: insufficient data."; from sklearn.tree import DecisionTreeClassifier; tree = DecisionTreeClassifier(max_depth=3); tree.fit(X, y); from io import StringIO; output = StringIO(); from sklearn.tree import export_text; tree_text = export_text(tree, feature_names=["Feature"+str(i) for i in range(X.shape[1])]); print(tree_text, file=output); return output.getvalue()' if strategy_class.__name__ == 'DQNStrategy' else ''}
-    {'def extract_rules(self, data_name): if self.best_individuals[data_name] is None: return "No rules extracted: optimization failed."; rsi_buy, rsi_sell, ma_buy, vol_threshold = self.best_individuals[data_name]; stability = np.std(self.fitness_history[data_name][-5:]) if len(self.fitness_history[data_name]) >= 5 else 0; rules = f"""Buy Rule: RSI < {{rsi_buy:.2f}} AND MA20 > 0 AND Volatility < {{vol_threshold:.2f}}\\nSell Rule: RSI > {{rsi_sell:.2f}}\\nStability Metric (Std of last 5 gen fitness): {{stability:.4f}}"""; return rules' if strategy_class.__name__ == 'GAStrategy' else ''}
+                        logger.info(msg)
+            except Exception as e:
+                logger.error(f"Strategy execution failed for {{data._name}}: {{str(e)}}", exc_info=True)
+                st.warning(f"Error executing {{self.__class__.__name__}} strategy for {{data._name}}: {{str(e)}}. Skipping this step.")
+    {'def extract_rules(self, data_name): try: X = np.array([self.get_state(data) for data in self.datas if data._name == data_name]); y = np.array(self.actions_history[data_name][-len(X):]) if self.actions_history[data_name] else np.zeros(len(X)); if len(X) == 0 or len(y) == 0: logger.warning(f"No data for rule extraction for {{data_name}}"); return "No rules extracted: insufficient data."; from sklearn.tree import DecisionTreeClassifier; tree = DecisionTreeClassifier(max_depth=3); tree.fit(X, y); from io import StringIO; output = StringIO(); from sklearn.tree import export_text; tree_text = export_text(tree, feature_names=["Feature"+str(i) for i in range(X.shape[1])]); print(tree_text, file=output); rules = output.getvalue(); logger.info(f"Rules extracted for {{data_name}}"); return rules; except Exception as e: logger.error(f"Rule extraction failed for {{data_name}}: {{str(e)}}", exc_info=True); return f"Error extracting rules: {{str(e)}}"' if strategy_class.__name__ == 'DQNStrategy' else ''}
+    {'def extract_rules(self, data_name): try: if self.best_individuals[data_name] is None: logger.warning(f"No best individual for {{data_name}}"); return "No rules extracted: optimization failed."; rsi_buy, rsi_sell, ma_buy, vol_threshold = self.best_individuals[data_name]; stability = np.std(self.fitness_history[data_name][-5:]) if len(self.fitness_history[data_name]) >= 5 else 0; rules = f"""Buy Rule: RSI < {{rsi_buy:.2f}} AND MA20 > 0 AND Volatility < {{vol_threshold:.2f}}\\nSell Rule: RSI > {{rsi_sell:.2f}}\\nStability Metric (Std of last 5 gen fitness): {{stability:.4f}}"""; logger.info(f"Rules extracted for {{data_name}}"); return rules; except Exception as e: logger.error(f"Rule extraction failed for {{data_name}}: {{str(e)}}", exc_info=True); return f"Error extracting rules: {{str(e)}}"' if strategy_class.__name__ == 'GAStrategy' else ''}
 """
         with open(f"{filename_prefix}_{strategy_class.__name__}_{unique_id}.py", "w") as f:
             f.write(py_content)
@@ -432,14 +532,19 @@ class {strategy_class.__name__}(bt.Strategy):
                 mime="application/pdf"
             )
         st.success(f"Exported strategy to {filename_prefix}_{strategy_class.__name__}_{unique_id}.py and {report_filename}")
+        logger.info(f"Strategy exported: {filename_prefix}_{strategy_class.__name__}_{unique_id}.py and {report_filename}")
     except Exception as e:
-        logging.error(f"Export error: {str(e)}")
-        st.error(f"Error exporting strategy: {str(e)}")
+        logger.error(f"Export strategy failed: {str(e)}", exc_info=True)
+        st.error(f"Error exporting strategy: {str(e)}. Please check file permissions or disk space.")
+
 def run_backtest(strategy_class, data_feeds, cash=10000, commission=0.001):
     try:
         cerebro = bt.Cerebro()
         cerebro.addstrategy(strategy_class)
         for data_feed in data_feeds:
+            if not isinstance(data_feed, bt.feeds.PandasData):
+                logger.error(f"Invalid data feed type for {data_feed._name}: {type(data_feed)}")
+                raise ValueError(f"Invalid data feed type for {data_feed._name}")
             cerebro.adddata(data_feed)
         cerebro.broker.setcash(cash)
         cerebro.broker.setcommission(commission)
@@ -447,7 +552,7 @@ def run_backtest(strategy_class, data_feeds, cash=10000, commission=0.001):
         cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
         cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
         cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
-        logging.info(f"Running {strategy_class.__name__} Strategy...")
+        logger.info(f"Starting backtest for {strategy_class.__name__} with {len(data_feeds)} assets")
         result = cerebro.run()
         strat = result[0]
         sharpe = strat.analyzers.sharpe.get_analysis()
@@ -469,14 +574,16 @@ def run_backtest(strategy_class, data_feeds, cash=10000, commission=0.001):
         for data in data_feeds:
             rules[data._name] = strat.extract_rules(data._name)
         if perf_summary["Sharpe Ratio"] < 0:
-            st.warning("Negative Sharpe Ratio detected. Strategy may be underperforming.")
+            st.warning("Negative Sharpe Ratio detected. Strategy may be underperforming. Consider adjusting parameters or reviewing market conditions.")
         if perf_summary["Total Trades"] == 0:
-            st.warning("No trades executed. Check data or strategy parameters.")
+            st.warning("No trades executed. Check data quality, strategy parameters, or market conditions.")
+        logger.info(f"Backtest completed. Sharpe Ratio: {perf_summary['Sharpe Ratio']:.2f}, Total Trades: {perf_summary['Total Trades']}")
         return perf_summary, strat.trade_log, fig, rules
     except Exception as e:
-        logging.error(f"Backtest error: {str(e)}")
-        st.error(f"Error running backtest: {str(e)}. Please verify inputs and data.")
+        logger.error(f"Backtest failed: {str(e)}", exc_info=True)
+        st.error(f"Backtest failed: {str(e)}. Please verify inputs, data quality, or contact support.")
         return {}, [], plt.figure(), {}
+
 def main():
     st.set_page_config(page_title="ML Strategy Backtest", layout="wide")
     st.title("Machine Learning Strategy Backtest")
@@ -489,21 +596,26 @@ def main():
     model_type = st.sidebar.selectbox("Model Type", ["DQN", "GA"], help="Choose between Deep Q-Network or Genetic Algorithm")
     use_synthetic = st.sidebar.checkbox("Use Synthetic Data", value=False, help="Generate synthetic data instead of fetching real data")
     objective = st.sidebar.selectbox("Performance Objective", ["Maximize Sharpe Ratio", "Minimize Max Drawdown"], help="Select optimization goal")
+    
     if start_date >= end_date:
-        st.error("Start date must be before end date.")
+        st.error("Start date must be before end date. Please select valid dates.")
+        logger.error("Invalid date range: start date >= end date")
         return
+    
     if st.sidebar.button("Run Backtest"):
         with st.spinner("Validating inputs and fetching data..."):
             ticker_list = [t.strip() for t in tickers.split(",")]
             if not ticker_list or any(not t for t in ticker_list):
                 st.error("Please enter valid tickers.")
+                logger.error("Invalid tickers provided")
                 return
             data_feeds = []
             if use_synthetic:
                 for ticker in ticker_list:
                     data = generate_synthetic_data(start_date, end_date, ticker=ticker)
                     if data.empty:
-                        st.error(f"Failed to generate synthetic data for {ticker}.")
+                        st.error(f"Failed to generate synthetic data for {ticker}. Please try different parameters.")
+                        logger.error(f"Failed to generate synthetic data for {ticker}")
                         return
                     data_feed = bt.feeds.PandasData(dataname=data, fromdate=start_date, todate=end_date, name=ticker)
                     data_feeds.append(data_feed)
@@ -514,14 +626,18 @@ def main():
                         data = fetcher.get_stock_data(symbol=ticker, start_date=start_date, end_date=end_date)
                         if data.empty:
                             st.error(f"No data retrieved for {ticker}. Please check ticker or date range.")
+                            logger.error(f"No data retrieved for {ticker}")
                             return
                         if len(data) < 30:
-                            st.warning(f"Data for {ticker} has only {len(data)} rows. Consider extending date range.")
+                            st.warning(f"Data for {ticker} has only {len(data)} rows. Consider extending date range for better results.")
+                            logger.warning(f"Insufficient data for {ticker}: {len(data)} rows")
                         data_feed = bt.feeds.PandasData(dataname=data, fromdate=start_date, todate=end_date, name=ticker)
                         data_feeds.append(data_feed)
                 except Exception as e:
                     st.error(f"Error fetching data: {str(e)}. Please check network or API access.")
+                    logger.error(f"Data fetching failed: {str(e)}", exc_info=True)
                     return
+        
         with st.spinner("Running backtest..."):
             strategy_class = {'DQN': DQNStrategy, 'GA': GAStrategy}[model_type]
             try:
@@ -532,11 +648,14 @@ def main():
                     commission=commission
                 )
                 if not perf_summary:
-                    st.error("Backtest failed to produce results.")
+                    st.error("Backtest failed to produce results. Please check logs for details.")
+                    logger.error("Backtest failed to produce results")
                     return
             except Exception as e:
-                st.error(f"Backtest failed: {str(e)}. Please check inputs or contact support.")
+                st.error(f"Backtest failed: {str(e)}. Please check inputs, data quality, or contact support.")
+                logger.error(f"Backtest execution failed: {str(e)}", exc_info=True)
                 return
+        
         st.subheader("Performance Summary")
         col1, col2 = st.columns(2)
         with col1:
@@ -547,18 +666,22 @@ def main():
             st.metric("Avg Annual Return", f"{perf_summary['Avg Annual Return']*100:.2f}%")
             st.metric("Max Drawdown", f"{perf_summary['Max Drawdown']:.2f}%")
             st.metric("Total Trades", perf_summary['Total Trades'])
+        
         st.subheader("Trading Rules")
         for ticker, rule in rules.items():
             with st.expander(f"Rules for {ticker}"):
                 st.text(rule)
+        
         st.subheader("Trade Log")
         if trade_log:
             trade_df = pd.DataFrame({"Trade": trade_log})
             st.dataframe(trade_df, use_container_width=True)
         else:
             st.info("No trades executed during the backtest.")
+        
         st.subheader("Backtest Chart")
         st.pyplot(fig)
+        
         st.subheader("Model Convergence")
         if model_type == "GA":
             fig_conv = plt.figure()
@@ -571,10 +694,12 @@ def main():
             plt.legend()
             plt.grid(True)
             st.pyplot(fig_conv)
+        
         st.subheader("Export Strategy")
         if st.button("Export Strategy"):
             with st.spinner("Exporting strategy..."):
                 export_strategy(strategy_class, perf_summary, trade_log, rules, ticker_list)
+
 if __name__ == '__main__':
     warnings.filterwarnings('ignore', category=UserWarning)
     main()
