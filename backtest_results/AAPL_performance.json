@@ -1,0 +1,8 @@
+{
+  "cumulative_return": -0.021403771168517993,
+  "sharpe_ratio": 0.15813292127637799,
+  "max_drawdown": -0.046470482883732074,
+  "drawdown_duration_days": 6,
+  "start_value": 10000.0,
+  "end_value": 9785.96228831482
+}
