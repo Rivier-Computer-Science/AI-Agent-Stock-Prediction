@@ -1,5 +1,8 @@
 import os
+import re
+import sys
 import json
+import math
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -13,8 +16,14 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 import warnings
+
+# --- CrewAI / LLM ---
+from crewai import Agent, Task, Crew, Process
+from langchain_openai import ChatOpenAI
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
 # #########################
 # 1. TRF.1: DataHandler
 # #########################
@@ -109,7 +118,6 @@ class TransformerModel(nn.Module):
         wait = 0
 
         for epoch in range(1, epochs + 1):
-            # set module to training mode
             super().train()
             total_loss = 0
             for xb, yb in train_loader:
@@ -123,7 +131,6 @@ class TransformerModel(nn.Module):
             print(f"Epoch {epoch}, train loss: {total_loss/len(train_loader):.4f}")
 
             if val_loader:
-                # set module to eval mode
                 super().eval()
                 val_loss = 0
                 with torch.no_grad():
@@ -143,7 +150,6 @@ class TransformerModel(nn.Module):
                         print("Early stopping.")
                         break
 
-        # load best model
         self.load_state_dict(torch.load(ckpt_path))
 
 
@@ -167,6 +173,8 @@ class EmbeddingsExtractor:
                 emb = self.model(xb).cpu().numpy()
                 for vec, label in zip(emb, yb.numpy()):
                     rows.append(list(vec) + [int(label)])
+        if not rows:
+            raise RuntimeError("No embeddings produced. Check your data/windowing.")
         cols = [f'emb_{i}' for i in range(len(rows[0]) - 1)] + ['label']
         pd.DataFrame(rows, columns=cols).to_csv(output_csv, index=False)
         print(f"Embeddings saved to {output_csv}")
@@ -214,20 +222,104 @@ class XGBoostTrainer:
 
 
 # #########################
+# 6. TRF.6: CrewAI Decision Agent (LLM-only, no fallback)
+# #########################
+class CrewAIDecisionAgent:
+    """
+    Uses a CrewAI Agent (LLM-backed) to decide BUY/SELL/HOLD based on xgb_prob.
+    No rule-based fallback: if the LLM isn't available or doesn't return valid JSON, this raises.
+    """
+    def __init__(self, model_name: str = "gpt-4o", temperature: float = 0.0, verbose: bool = False):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "OPENAI_API_KEY not set. This implementation requires an LLM via CrewAI (no fallback)."
+            )
+        self.llm = ChatOpenAI(model=model_name, temperature=temperature)
+        self.agent = Agent(
+            role="Trading Decision Agent",
+            goal="Return a clear BUY, SELL, or HOLD recommendation for a stock based on xgb_prob.",
+            backstory=(
+                "You specialize in converting probabilistic model outputs into actionable trade decisions. "
+                "You always answer strictly in JSON."
+            ),
+            verbose=verbose,
+            allow_delegation=False,
+            llm=self.llm,
+        )
+
+    def _task_for(self, stock: str, prob: float) -> Task:
+        if prob is None or isinstance(prob, float) and (math.isnan(prob) or math.isinf(prob)):
+            raise ValueError("xgb_prob must be a finite float.")
+
+        prompt = (
+            "You are a trading decision assistant.\n"
+            f"Ticker: {stock}\n"
+            f"xgb_prob (probability of an upward move): {prob:.6f}\n\n"
+            "Instructions:\n"
+            "1) Decide one of: BUY, SELL, HOLD.\n"
+            "2) Respond with EXACTLY a compact JSON object on one line, no extra text, like:\n"
+            '{"recommendation":"BUY"}\n'
+            "3) Valid values are only BUY, SELL, HOLD (uppercase)."
+        )
+        return Task(
+            description=prompt,
+            expected_output='A single-line JSON object with key "recommendation" and value BUY/SELL/HOLD.',
+            agent=self.agent,
+        )
+
+    def _extract_json(self, text: str) -> dict:
+        m = re.search(r'\{.*\}', text.strip(), flags=re.DOTALL)
+        if not m:
+            raise RuntimeError("CrewAI agent did not return JSON.")
+        try:
+            return json.loads(m.group(0))
+        except Exception as e:
+            raise RuntimeError(f"Invalid JSON from CrewAI agent: {e}")
+
+    def decide(self, items):
+        """
+        items: dict or list of dicts with keys:
+          { "stock": <str>, "xgb_prob": <float> }
+        returns: list of {stock, xgb_prob, recommendation}
+        """
+        if isinstance(items, dict):
+            items = [items]
+        outputs = []
+        for it in items:
+            stock = it.get("stock")
+            prob = it.get("xgb_prob")
+            if stock is None:
+                raise ValueError("Missing 'stock' in decision item.")
+            task = self._task_for(stock, float(prob))
+            crew = Crew(agents=[self.agent], tasks=[task], process=Process.sequential)
+            res = crew.kickoff()
+            text = str(res)
+            obj = self._extract_json(text)
+            rec = obj.get("recommendation", "").upper()
+            if rec not in {"BUY", "SELL", "HOLD"}:
+                raise RuntimeError("CrewAI agent returned invalid recommendation.")
+            outputs.append({"stock": stock, "xgb_prob": float(prob), "recommendation": rec})
+        return outputs
+
+
+# #########################
 # 5. TRF.5: InferencePipeline
 # #########################
 class InferencePipeline:
     """
-    Loads Transformer and XGBoost models, computes scores for a new window, emits JSON.
+    Loads Transformer and XGBoost models, computes scores for a new window, asks CrewAI agent for recommendation,
+    and emits JSON including the recommendation. The program terminates immediately after printing.
     """
     def __init__(self, transformer_path='transformer.pt', xgb_path='xgb_model.joblib',
-                 window_size=20):
+                 window_size=20, model_name: str = "gpt-4o", temperature: float = 0.0):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.transformer = None
         self.transformer_path = transformer_path
         self.xgb = joblib.load(xgb_path)
         self.window_size = window_size
         self.scaler = StandardScaler()
+        self.decision_agent = CrewAIDecisionAgent(model_name=model_name, temperature=temperature)
 
     def load_transformer(self, feature_dim):
         model = TransformerModel(feature_dim)
@@ -250,21 +342,32 @@ class InferencePipeline:
             logits = self.transformer(xb).cpu().numpy()
             probs = F.softmax(torch.tensor(logits), dim=1).numpy()[0]
 
-        transformer_score = float(probs[1])
-        emb = logits
+        transformer_score = float(probs[1])   # probability of class "up" from Transformer
+        emb = logits                           # 2-dim logits from the classifier
         xgb_prob = float(self.xgb.predict_proba(emb)[0][1])
+
+        # Ask CrewAI agent for the decision (no fallback)
+        rec_obj = self.decision_agent.decide({"stock": ticker, "xgb_prob": xgb_prob})[0]
+        recommendation = rec_obj["recommendation"]
 
         result = {
             'date': end_date,
+            'ticker': ticker,
             'transformer_score': transformer_score,
-            'xgb_prob': xgb_prob
+            'xgb_prob': xgb_prob,
+            'recommendation': recommendation
         }
+
+        # Print and terminate immediately
+        print(f"CrewAI Decision: {recommendation}")
         print(json.dumps(result))
-        return result
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)  # force-stop the process immediately after printing
 
 
 # #########################
-# Main execution for TRF.1 - TRF.5
+# Main execution for TRF.1 - TRF.6
 # #########################
 if __name__ == '__main__':
     ticker = input("Enter stock ticker (e.g. AAPL): ")
@@ -301,6 +404,12 @@ if __name__ == '__main__':
     xgb_trainer = XGBoostTrainer('embeddings.csv')
     xgb_trainer.train(output_model='xgb_model.joblib')
 
-    # 5. (Optional) Inference example
-    infer = InferencePipeline('transformer.pt', 'xgb_model.joblib', window_size=handler.window_size)
+    # 5 & 6. Inference + CrewAI decision (program exits inside predict)
+    infer = InferencePipeline(
+        'transformer.pt',
+        'xgb_model.joblib',
+        window_size=handler.window_size,
+        model_name="gpt-4o",
+        temperature=0.0
+    )
     infer.predict(ticker, start_date, end_date)
